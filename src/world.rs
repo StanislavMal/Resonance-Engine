@@ -6,7 +6,6 @@ use crate::archetype::*;
 use crate::context::{CommandBuffer, NodeContext};
 use crate::entity::{EntityBuilder, EntityHandle, PendingEntity};
 use crate::gpu::{GpuContext, GpuExecutor};
-use crate::gpu::shader::builtins;
 use crate::interning::{InternedStr, StringInterner};
 use crate::resonator::{DynResonator, FieldMap, Resonator};
 use crate::scheduler::{self, SchedulerConfig, TickResult};
@@ -40,6 +39,7 @@ pub enum BuildWarning {
 
 /// Registered prefab schema for deferred spawning from resonators
 struct PrefabRegistration {
+    #[allow(dead_code)]
     archetype_name: String,
     attr_names: Vec<String>,
     attr_defaults: Vec<f64>,
@@ -1016,8 +1016,8 @@ impl World {
                 if entity_count > 0 {
                     // Get or compile the shader
                     let wgsl_source = match gpu_config.entry_point {
-                        "main" => builtins::PARTICLE_PHYSICS_WGSL,
-                        _ => builtins::ATTRIBUTE_TRANSFORM_WGSL,
+                        "main" => crate::gpu::shader::builtins::PARTICLE_PHYSICS_WGSL,
+                        _ => crate::gpu::shader::builtins::ATTRIBUTE_TRANSFORM_WGSL,
                     };
                     
                     let shader = shader_registry.get_or_compile(

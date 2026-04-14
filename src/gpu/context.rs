@@ -3,7 +3,6 @@
 
 use crate::archetype::ArchetypeId;
 use crate::world::World;
-use crate::storage::FloatOffset;
 use wgpu::{CommandEncoder, Device, Queue};
 use std::sync::Arc;
 
@@ -99,17 +98,17 @@ impl GpuContext {
 
         // Get CPU data from world storage
         let floats_per_entity = archetype.schema.floats_per_entity as usize;
-        let entity_count = archetype.alive_count();
+        let _entity_count = archetype.alive_count();
         
         // Collect float offsets for alive entities
-        let offsets_data: Vec<FloatOffset> = archetype.alive_iter().map(|(_, _, off)| off).collect();
+        let offsets_data: Vec<u32> = archetype.alive_iter().map(|(_, _, off)| off.0).collect();
         
         // Read from staging slot and upload to GPU
         ring.upload_from_cpu(&self.device, &self.queue, |staging_slice| {
             let mut offset = 0usize;
-            for &float_offset in &offsets_data {
+            for &float_offset_val in &offsets_data {
                 for field_idx in 0..floats_per_entity {
-                    let abs_offset = float_offset.0 as usize + field_idx;
+                    let abs_offset = float_offset_val as usize + field_idx;
                     if abs_offset < world.storage.float_count() {
                         staging_slice[offset] = world.storage.read_abs(abs_offset);
                     }

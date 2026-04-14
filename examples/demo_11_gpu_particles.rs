@@ -9,16 +9,16 @@ use pollster::block_on;
 use std::time::Instant;
 
 // Определяем атрибуты для частиц
-resonance_engine::define_attr!(PosX f64);
-resonance_engine::define_attr!(PosY f64);
-resonance_engine::define_attr!(PosZ f64);
-resonance_engine::define_attr!(VelX f64);
-resonance_engine::define_attr!(VelY f64);
-resonance_engine::define_attr!(VelZ f64);
-resonance_engine::define_attr!(Life f64);
-resonance_engine::define_attr!(ColorR f64);
-resonance_engine::define_attr!(ColorG f64);
-resonance_engine::define_attr!(ColorB f64);
+resonance_engine::define_attr!(PosX, f64);
+resonance_engine::define_attr!(PosY, f64);
+resonance_engine::define_attr!(PosZ, f64);
+resonance_engine::define_attr!(VelX, f64);
+resonance_engine::define_attr!(VelY, f64);
+resonance_engine::define_attr!(VelZ, f64);
+resonance_engine::define_attr!(Life, f64);
+resonance_engine::define_attr!(ColorR, f64);
+resonance_engine::define_attr!(ColorG, f64);
+resonance_engine::define_attr!(ColorB, f64);
 
 fn main() {
     // Инициализация логгера
