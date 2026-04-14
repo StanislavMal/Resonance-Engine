@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use super::context::GpuContext;
 use super::shader::GpuShader;
-use super::buffer::GpuBufferRing;
 
 /// Result of GPU execution
 #[derive(Debug, Clone)]

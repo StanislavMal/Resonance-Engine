@@ -2,15 +2,15 @@
 # Compiled and build artifacts
 *.o
 *.obj
-*.a
-*.so
-*.dll
 *.exe
+*.dll
+*.so
+*.a
 *.out
 
 # Dependencies
 target/
-Cargo.lock
+**/target/
 
 # Logs and temp files
 *.log
@@ -21,8 +21,32 @@ Cargo.lock
 .vscode/
 .idea/
 
-# Environment
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Environment files
 .env
 .env.local
 *.env.*
+
+# Python specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.Pytest_cache/
+
+# Rust specific
+Cargo.lock
+**/*.rs.bk
+```
+
+Wait, I need to reconsider this. Looking at the file changes, they are only source code files (.rs files) and a markdown file. There are no build artifacts, dependency directories, or temporary files in the change list that would warrant adding ignore rules.
+
+```
+
 ```

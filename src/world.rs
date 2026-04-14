@@ -983,8 +983,6 @@ impl World {
     /// 3. Execute CPU resonators for remaining archetypes in parallel
     /// 4. Return without waiting for GPU completion (async overlap)
     pub fn tick_hybrid(&mut self, gpu_ctx: &mut GpuContext) -> scheduler::HybridTickResult {
-        use crate::gpu::shader::GpuShader;
-
         self.storage.begin_tick();
         
         let mut gpu_commands_submitted = 0usize;
@@ -1043,7 +1041,7 @@ impl World {
         }
 
         // Step 3: Execute GPU dispatches
-        if !gpu_executor.pending_count() == 0 {
+        if gpu_executor.pending_count() > 0 {
             let mut encoder = gpu_ctx.create_command_encoder();
             let _results = gpu_executor.execute(gpu_ctx, &mut encoder);
             gpu_commands_submitted = gpu_executor.pending_count();

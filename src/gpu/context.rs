@@ -1,7 +1,7 @@
 // src/gpu/context.rs
 //! GpuContext - manages wgpu Device, Queue and archetype buffers
 
-use crate::archetype::ArchetypeId;
+use crate::archetype::{ArchetypeId, FloatOffset};
 use crate::world::World;
 use wgpu::{CommandEncoder, Device, Queue};
 use std::sync::Arc;
@@ -83,7 +83,6 @@ impl GpuContext {
 
     /// Sync CPU archetype data to GPU staging buffer
     pub fn sync_archetype(&mut self, world: &mut World, arch_idx: usize) {
-        
         let archetype = &world.archetypes[arch_idx];
         let arch_id = archetype.id;
         
@@ -97,20 +96,21 @@ impl GpuContext {
             return; // No sync needed
         }
 
-        // Get CPU data pointer
+        // Get CPU data from world storage
         let floats_per_entity = archetype.schema.floats_per_entity as usize;
-        let storage_ptr = archetype.storage.raw_ptrs();
+        let entity_count = archetype.alive_count();
+        
+        // Collect float offsets for alive entities
+        let offsets_data: Vec<FloatOffset> = archetype.alive_iter().map(|(_, _, off)| off).collect();
         
         // Read from staging slot and upload to GPU
         ring.upload_from_cpu(&self.device, &self.queue, |staging_slice| {
             let mut offset = 0usize;
-            for (_, _, float_offset) in archetype.alive_iter() {
+            for &float_offset in &offsets_data {
                 for field_idx in 0..floats_per_entity {
                     let abs_offset = float_offset.0 as usize + field_idx;
-                    if abs_offset < storage_ptr.float_len {
-                        unsafe {
-                            staging_slice[offset] = *storage_ptr.read_floats.add(abs_offset);
-                        }
+                    if abs_offset < world.storage.float_count() {
+                        staging_slice[offset] = world.storage.read_abs(abs_offset);
                     }
                     offset += 1;
                 }

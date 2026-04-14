@@ -2,7 +2,6 @@
 //! GPU buffer management with triple-buffering for CPU/GPU overlap
 
 use crate::archetype::ArchetypeId;
-use bytemuck::{Pod, Zeroable};
 use wgpu::{Buffer, BufferAddress, Device, Queue};
 
 /// Single GPU buffer for archetype data
@@ -154,9 +153,8 @@ impl GpuBufferRing {
         });
 
         {
-            let slice = temp_buffer.slice(..).get_mapped_range_mut();
-            let byte_slice: &[u8] = &slice;
-            let f64_slice: &mut [f64] = bytemuck::cast_slice_mut(byte_slice);
+            let mut slice = temp_buffer.slice(..).get_mapped_range_mut();
+            let f64_slice: &mut [f64] = bytemuck::cast_slice_mut(&mut *slice);
             fill_data(f64_slice);
         }
 
