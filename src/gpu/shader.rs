@@ -2,6 +2,7 @@
 //! GPU shader management and dispatch configuration
 
 use crate::resonator::GpuDispatchConfig;
+pub use crate::resonator::GpuDispatchConfig as PublicGpuDispatchConfig;
 use wgpu::{ComputePipeline, Device, ShaderModule};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -37,8 +38,9 @@ impl GpuShader {
             label: Some(&format!("Pipeline_{}", name)),
             layout: Some(&pipeline_layout),
             module: &module,
-            entry_point: config.entry_point,
+            entry_point: Some(config.entry_point),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         Self {
@@ -60,7 +62,6 @@ impl GpuShader {
 
 /// Built-in shaders provided by the engine
 pub mod builtins {
-    use super::*;
 
     /// Particle physics update shader
     pub const PARTICLE_PHYSICS_WGSL: &str = r#"

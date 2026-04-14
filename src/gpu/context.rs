@@ -3,10 +3,10 @@
 
 use crate::archetype::ArchetypeId;
 use crate::world::World;
-use wgpu::{Buffer, CommandEncoder, Device, Queue};
+use wgpu::{CommandEncoder, Device, Queue};
 use std::sync::Arc;
 
-use super::buffer::{GpuArchetypeBuffer, GpuBufferRing};
+use super::buffer::GpuBufferRing;
 
 /// GPU context holding device, queue and managed buffers
 pub struct GpuContext {
@@ -34,9 +34,10 @@ impl GpuContext {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::COMPUTE_SHADER,
+                    required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                     label: Some("Resonance Engine Device"),
+                    memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
             )
@@ -81,8 +82,7 @@ impl GpuContext {
     }
 
     /// Sync CPU archetype data to GPU staging buffer
-    pub fn sync_archetype(&mut self, world: &World, arch_idx: usize) {
-        use crate::storage::StoragePtr;
+    pub fn sync_archetype(&mut self, world: &mut World, arch_idx: usize) {
         
         let archetype = &world.archetypes[arch_idx];
         let arch_id = archetype.id;
@@ -98,9 +98,7 @@ impl GpuContext {
         }
 
         // Get CPU data pointer
-        let sp = world.storage.raw_ptrs();
         let floats_per_entity = archetype.schema.floats_per_entity as usize;
-        let entity_count = archetype.alive_count();
         
         // Read from staging slot and upload to GPU
         ring.upload_from_cpu(&self.device, &self.queue, |staging_slice| {

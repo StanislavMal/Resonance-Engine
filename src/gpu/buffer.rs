@@ -4,7 +4,6 @@
 use crate::archetype::ArchetypeId;
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Buffer, BufferAddress, Device, Queue};
-use std::sync::Arc;
 
 /// Single GPU buffer for archetype data
 #[derive(Debug)]
@@ -156,7 +155,7 @@ impl GpuBufferRing {
 
         {
             let slice = temp_buffer.slice(..).get_mapped_range_mut();
-            let f64_slice: &mut [f64] = bytemuck::cast_slice_mut(&slice);
+            let f64_slice: &mut [f64] = bytemuck::cast_slice_mut(&mut &*slice);
             fill_data(f64_slice);
         }
 

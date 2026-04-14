@@ -3,12 +3,12 @@
 
 use crate::archetype::ArchetypeId;
 use crate::resonator::GpuDispatchConfig;
-use wgpu::{CommandEncoder, ComputePipeline};
+use wgpu::CommandEncoder;
 use std::sync::Arc;
 
 use super::context::GpuContext;
 use super::shader::GpuShader;
-use super::buffer::{GpuBufferRing, BufferSlotType};
+use super::buffer::GpuBufferRing;
 
 /// Result of GPU execution
 #[derive(Debug, Clone)]

@@ -5,9 +5,9 @@ use crate::accessor::{AttrOffset, EntityRef};
 use crate::archetype::*;
 use crate::context::{CommandBuffer, NodeContext};
 use crate::entity::{EntityBuilder, EntityHandle, PendingEntity};
-use crate::gpu::{GpuContext, GpuExecutor, GpuShader};
+use crate::gpu::{GpuContext, GpuExecutor};
 use crate::interning::{InternedStr, StringInterner};
-use crate::resonator::{DynResonator, FieldMap, Resonator, GpuDispatchConfig};
+use crate::resonator::{DynResonator, FieldMap, Resonator};
 use crate::scheduler::{self, SchedulerConfig, TickResult};
 use crate::storage::{FieldIndex, Storage};
 use crate::typed_attrs::TypedAttr;
@@ -981,8 +981,7 @@ impl World {
     /// 3. Execute CPU resonators for remaining archetypes in parallel
     /// 4. Return without waiting for GPU completion (async overlap)
     pub fn tick_hybrid(&mut self, gpu_ctx: &mut GpuContext) -> scheduler::HybridTickResult {
-        use crate::gpu::shader::{GpuShader, builtins};
-        use wgpu::ComputePipeline;
+        use crate::gpu::shader::GpuShader;
 
         self.storage.begin_tick();
         

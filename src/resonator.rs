@@ -7,7 +7,6 @@ use crate::context::NodeContext;
 use crate::storage::FieldIndex;
 use crate::typed_attrs::TypedAttr;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 /// Core resonator trait — implement for custom resonators with state.
 pub trait Resonator: Send + Sync + 'static {
@@ -59,12 +58,14 @@ pub trait ResonatorGpu: Resonator {
 }
 
 /// Blanket impl - all ResonatorGpu are also Resonator (CPU fallback)
-impl<T: ResonatorGpu> Resonator for T {
-    fn apply(&self, ctx: &mut NodeContext) {
-        // Default CPU fallback - can be overridden by specific impls
-        // This allows GPU resonators to have a CPU fallback path
-    }
-}
+/// NOTE: This creates a conflict with the Fn() impl, so we remove it.
+/// Users must manually implement Resonator for their GPU resonator types if needed.
+// impl<T: ResonatorGpu> Resonator for T {
+//     fn apply(&self, ctx: &mut NodeContext) {
+//         // Default CPU fallback - can be overridden by specific impls
+//         // This allows GPU resonators to have a CPU fallback path
+//     }
+// }
 
 /// Typed field binding — resolved at entity build time, zero-cost at runtime.
 ///

@@ -3,7 +3,6 @@
 
 use crate::world::World;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
 pub struct TickMetrics {

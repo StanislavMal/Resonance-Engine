@@ -11,5 +11,5 @@ pub mod executor;
 
 pub use context::GpuContext;
 pub use buffer::{GpuArchetypeBuffer, GpuBufferRing};
-pub use shader::{GpuShader, GpuDispatchConfig};
+pub use shader::{GpuShader, PublicGpuDispatchConfig as GpuDispatchConfig};
 pub use executor::GpuExecutor;

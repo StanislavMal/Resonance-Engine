@@ -7,14 +7,28 @@
 *.so
 *.a
 *.out
+target/
 
 # Dependencies
-target/
-**/target/
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/.mypy_cache/
+**/.pytest_cache/
+**/.gradle/
+**/dist/
+**/build/
 
 # Logs and temp files
 *.log
 *.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+.env.*
 
 # Editors
 .vscode/
@@ -22,17 +36,16 @@ target/
 *.swp
 *.swo
 
-# Environment
-.env
-.env.local
-*.env.*
+# Rust-specific
+Cargo.lock
+**/target/
 
 # Coverage
 coverage/
 htmlcov/
 .coverage
 
-# Rust-specific
-Cargo.lock
-**/*.rs.bk
+# System files
+.DS_Store
+Thumbs.db
 ```

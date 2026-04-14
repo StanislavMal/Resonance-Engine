@@ -1,9 +1,6 @@
 // src/spatial.rs
 //! Spatial Grid — uniform grid for O(1) spatial queries
 
-use crate::archetype::EntityId;
-use crate::entity::EntityHandle;
-use crate::interning::InternedStr;
 use crate::storage::FieldIndex;
 use crate::world::World;
 
