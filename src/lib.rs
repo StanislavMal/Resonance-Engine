@@ -1,11 +1,12 @@
 // src/lib.rs
-//! Resonance Engine v10.3 — High-performance simulation framework
+//! Resonance Engine v10.4 — High-performance simulation framework with GPU compute
 
 pub mod accessor;
 pub mod archetype;
 pub mod context;
 pub mod entity;
 pub mod events;
+pub mod gpu;
 pub mod interning;
 pub mod metrics;
 pub mod prefab;
@@ -26,6 +27,14 @@ pub use resonator::{BoundField, DynResonator, FieldMap, Resonator, ResonatorExt}
 pub use storage::{BufferMode, FieldIndex};
 pub use typed_attrs::{EnumAttr, TypedAttr};
 pub use world::{BuildWarning, World};
+
+// ─── Macro Re-exports ────────────────────────────
+pub use typed_attrs::define_attr;
+pub use typed_attrs::define_tag;
+
+// ─── GPU Re-exports ───────────────────────────────
+pub use gpu::{GpuContext, GpuArchetypeBuffer, GpuBufferRing, GpuShader, GpuDispatchConfig, GpuExecutor};
+pub use gpu::executor::{GpuResonatorExt, ResonatorGpu};
 
 // ─── Extension Traits ─────────────────────────────
 pub use prefab::WorldPrefabExt;

@@ -5,7 +5,7 @@
 //! Batch execution: один vtable call на архетип, tight loop по данным.
 
 use crate::interning::InternedStr;
-use crate::resonator::DynResonator;
+use crate::resonator::{DynResonator, GpuDispatchConfig};
 use crate::storage::{FieldIndex, FloatOffset};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -98,6 +98,10 @@ pub struct Archetype {
     alive: Vec<bool>,
     /// Free list внутри архетипа
     free_indices: Vec<usize>,
+    /// Optional GPU resonator configuration for this archetype
+    pub gpu_resonator: Option<GpuDispatchConfig>,
+    /// Flag indicating GPU data needs sync from CPU
+    pub needs_gpu_sync: bool,
 }
 
 impl Archetype {
@@ -111,6 +115,8 @@ impl Archetype {
             name,
             alive: Vec::new(),
             free_indices: Vec::new(),
+            gpu_resonator: None,
+            needs_gpu_sync: false,
         }
     }
 

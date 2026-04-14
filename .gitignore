@@ -1,29 +1,38 @@
-# Rust
-/target
-Cargo.lock
+```
+# Compiled and build artifacts
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.out
 
-# IDE и редакторы
+# Dependencies
+target/
+**/target/
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Editors
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-.DS_Store
 
-# Временные файлы и логи
-*.log
-*.tmp
-*.bak
+# Environment
+.env
+.env.local
+*.env.*
 
-# Скрипт генерации контекста и его результаты
-generate_context.bat
-*.txt
+# Coverage
+coverage/
+htmlcov/
+.coverage
 
-# Другие артефакты сборки и временные директории
-*.pdb
-*.exe
-*.dll
-*.so
-*.dylib
-*.rlib
-*.rmeta
+# Rust-specific
+Cargo.lock
+**/*.rs.bk
+```

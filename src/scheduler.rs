@@ -18,6 +18,14 @@ pub struct TickResult {
     pub despawn_requests: u64,
 }
 
+/// Result of hybrid CPU/GPU tick
+#[derive(Debug, Clone, Default)]
+pub struct HybridTickResult {
+    pub cpu_result: TickResult,
+    pub gpu_commands_submitted: usize,
+    pub gpu_entities_processed: u64,
+}
+
 /// Scheduler config
 pub struct SchedulerConfig {
     pub epsilon: f64,

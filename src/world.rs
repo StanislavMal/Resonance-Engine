@@ -5,8 +5,9 @@ use crate::accessor::{AttrOffset, EntityRef};
 use crate::archetype::*;
 use crate::context::{CommandBuffer, NodeContext};
 use crate::entity::{EntityBuilder, EntityHandle, PendingEntity};
+use crate::gpu::{GpuContext, GpuExecutor, GpuShader};
 use crate::interning::{InternedStr, StringInterner};
-use crate::resonator::{DynResonator, FieldMap, Resonator};
+use crate::resonator::{DynResonator, FieldMap, Resonator, GpuDispatchConfig};
 use crate::scheduler::{self, SchedulerConfig, TickResult};
 use crate::storage::{FieldIndex, Storage};
 use crate::typed_attrs::TypedAttr;
@@ -214,6 +215,12 @@ impl World {
                     self.archetypes[arch_idx].resonators = resonators;
                     resonators_built = true;
                 }
+
+                // Transfer GPU config from pending entity to archetype
+                if let Some(gpu_config) = pe.gpu_config {
+                    self.archetypes[arch_idx].gpu_resonator = Some(gpu_config);
+                    self.archetypes[arch_idx].needs_gpu_sync = true;
+                }
             }
         }
 
@@ -269,6 +276,12 @@ impl World {
 
                 for (field, value) in &pe.defaults {
                     self.storage.init_float(float_offset, *field, *value);
+                }
+
+                // Transfer GPU config for runtime-spawned entities
+                if let Some(gpu_config) = pe.gpu_config {
+                    self.archetypes[arch_idx].gpu_resonator = Some(gpu_config);
+                    self.archetypes[arch_idx].needs_gpu_sync = true;
                 }
             } else {
                 self.pending_entities.push(pe);
@@ -956,6 +969,142 @@ impl World {
             }
         }
         result
+    }
+
+    // ─── Hybrid GPU/CPU Tick ──────────────────────────
+
+    /// Execute a tick with hybrid CPU/GPU processing
+    /// 
+    /// This method overlaps CPU and GPU work:
+    /// 1. Sync dirty CPU data to GPU buffers
+    /// 2. Dispatch GPU compute shaders for GPU-enabled archetypes
+    /// 3. Execute CPU resonators for remaining archetypes in parallel
+    /// 4. Return without waiting for GPU completion (async overlap)
+    pub fn tick_hybrid(&mut self, gpu_ctx: &mut GpuContext) -> scheduler::HybridTickResult {
+        use crate::gpu::shader::{GpuShader, builtins};
+        use wgpu::ComputePipeline;
+
+        self.storage.begin_tick();
+        
+        let mut gpu_commands_submitted = 0usize;
+        let mut gpu_entities_processed = 0u64;
+
+        // Step 1: Sync dirty archetype data from CPU to GPU
+        for (arch_idx, archetype) in self.archetypes.iter_mut().enumerate() {
+            if archetype.needs_gpu_sync && archetype.gpu_resonator.is_some() {
+                gpu_ctx.sync_archetype(self, arch_idx);
+                archetype.needs_gpu_sync = false;
+            }
+        }
+
+        // Step 2: Collect GPU and CPU tasks
+        let mut gpu_executor = GpuExecutor::new();
+        let mut cpu_archetypes: Vec<usize> = Vec::new();
+
+        // Create shader registry for this frame
+        let mut shader_registry = crate::gpu::shader::ShaderRegistry::new();
+
+        for (arch_idx, archetype) in self.archetypes.iter().enumerate() {
+            if let Some(ref gpu_config) = archetype.gpu_resonator {
+                // This archetype has GPU execution enabled
+                let entity_count = archetype.alive_count();
+                if entity_count > 0 {
+                    // Get or compile the shader
+                    let wgsl_source = match gpu_config.entry_point {
+                        "main" => builtins::PARTICLE_PHYSICS_WGSL,
+                        _ => builtins::ATTRIBUTE_TRANSFORM_WGSL,
+                    };
+                    
+                    let shader = shader_registry.get_or_compile(
+                        &gpu_ctx.device,
+                        "particle_physics",
+                        wgsl_source,
+                        gpu_config.clone(),
+                    );
+
+                    gpu_executor.queue_dispatch(
+                        archetype.id,
+                        shader,
+                        entity_count,
+                    );
+                    gpu_entities_processed += entity_count as u64;
+                }
+            } else {
+                // CPU-only archetype
+                cpu_archetypes.push(arch_idx);
+            }
+        }
+
+        // Step 3: Execute GPU dispatches
+        if !gpu_executor.pending_count() == 0 {
+            let mut encoder = gpu_ctx.create_command_encoder();
+            let _results = gpu_executor.execute(gpu_ctx, &mut encoder);
+            gpu_commands_submitted = gpu_executor.pending_count();
+            gpu_ctx.submit_commands(encoder);
+        }
+
+        // Step 4: Execute CPU resonators in parallel
+        let mut cpu_result = TickResult::default();
+        let sp = self.storage.raw_ptrs();
+        let mut all_despawns: Vec<EntityId> = Vec::new();
+        let mut all_commands = CommandBuffer::new();
+
+        if cpu_archetypes.len() >= 2 {
+            let results: Vec<_> = cpu_archetypes
+                .par_iter()
+                .map(|&arch_idx| {
+                    scheduler::execute_archetype(&self.archetypes[arch_idx], sp, &self.config)
+                })
+                .collect();
+            
+            for batch_result in results {
+                cpu_result.total_calls += batch_result.calls;
+                cpu_result.entities_processed += batch_result.processed;
+                cpu_result.dirty_count += batch_result.dirty;
+                all_despawns.extend(batch_result.despawn_list);
+                all_commands.merge(batch_result.commands);
+            }
+        } else {
+            for &arch_idx in &cpu_archetypes {
+                let batch_result = scheduler::execute_archetype(
+                    &self.archetypes[arch_idx],
+                    sp,
+                    &self.config,
+                );
+                cpu_result.total_calls += batch_result.calls;
+                cpu_result.entities_processed += batch_result.processed;
+                cpu_result.dirty_count += batch_result.dirty;
+                all_despawns.extend(batch_result.despawn_list);
+                all_commands.merge(batch_result.commands);
+            }
+        }
+
+        self.storage.commit();
+
+        // Process despawns and commands
+        cpu_result.despawn_requests = all_despawns.len() as u64;
+        for entity_id in all_despawns {
+            self.despawn_internal(entity_id);
+        }
+        self.process_commands(all_commands);
+
+        self.storage.end_tick();
+
+        scheduler::HybridTickResult {
+            cpu_result,
+            gpu_commands_submitted,
+            gpu_entities_processed,
+        }
+    }
+
+    /// Sync all archetype data to GPU buffers (call before first tick_hybrid)
+    pub fn sync_all_to_gpu(&mut self, gpu_ctx: &mut GpuContext) {
+        for (arch_idx, archetype) in self.archetypes.iter_mut().enumerate() {
+            if archetype.gpu_resonator.is_some() && archetype.alive_count() > 0 {
+                gpu_ctx.sync_archetype(self, arch_idx);
+                archetype.needs_gpu_sync = false;
+            }
+        }
     }
 }
 

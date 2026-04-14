@@ -28,6 +28,44 @@ where
 /// Type-erased resonator for storage in Archetype
 pub type DynResonator = dyn Resonator;
 
+/// GPU dispatch configuration for hybrid resonators
+#[derive(Clone, Debug)]
+pub struct GpuDispatchConfig {
+    pub entry_point: &'static str,
+    pub workgroup_size: (u32, u32, u32),
+}
+
+impl Default for GpuDispatchConfig {
+    fn default() -> Self {
+        Self {
+            entry_point: "main",
+            workgroup_size: (64, 1, 1),
+        }
+    }
+}
+
+/// Extension trait for GPU-executable resonators
+pub trait ResonatorGpu: Resonator {
+    /// Returns GPU shader info if this resonator can run on GPU.
+    /// Returns Some(shader_name, dispatch_config) if GPU execution is supported.
+    fn gpu_shader(&self) -> Option<(&'static str, GpuDispatchConfig)> {
+        None
+    }
+
+    /// Returns true if this resonator should prefer GPU execution
+    fn prefers_gpu(&self) -> bool {
+        self.gpu_shader().is_some()
+    }
+}
+
+/// Blanket impl - all ResonatorGpu are also Resonator (CPU fallback)
+impl<T: ResonatorGpu> Resonator for T {
+    fn apply(&self, ctx: &mut NodeContext) {
+        // Default CPU fallback - can be overridden by specific impls
+        // This allows GPU resonators to have a CPU fallback path
+    }
+}
+
 /// Typed field binding — resolved at entity build time, zero-cost at runtime.
 ///
 /// `BoundField<Health>` compiles down to a single `FieldIndex` (2 bytes).
