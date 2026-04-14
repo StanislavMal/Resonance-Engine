@@ -9,16 +9,16 @@ use pollster::block_on;
 use std::time::Instant;
 
 // Определяем атрибуты для частиц
-resonance_engine::define_attr!(PosX, f32);
-resonance_engine::define_attr!(PosY, f32);
-resonance_engine::define_attr!(PosZ, f32);
-resonance_engine::define_attr!(VelX, f32);
-resonance_engine::define_attr!(VelY, f32);
-resonance_engine::define_attr!(VelZ, f32);
-resonance_engine::define_attr!(Life, f32);
-resonance_engine::define_attr!(ColorR, f32);
-resonance_engine::define_attr!(ColorG, f32);
-resonance_engine::define_attr!(ColorB, f32);
+resonance_engine::define_attr!(PosX);
+resonance_engine::define_attr!(PosY);
+resonance_engine::define_attr!(PosZ);
+resonance_engine::define_attr!(VelX);
+resonance_engine::define_attr!(VelY);
+resonance_engine::define_attr!(VelZ);
+resonance_engine::define_attr!(Life);
+resonance_engine::define_attr!(ColorR);
+resonance_engine::define_attr!(ColorG);
+resonance_engine::define_attr!(ColorB);
 
 fn main() {
     // Инициализация логгера
@@ -136,7 +136,7 @@ fn main() {
     let particles_per_second = (particle_count as u128 * 100) * 1_000_000_000 / total_time.as_nanos();
     println!("\n🎯 Производительность:");
     println!("-------------------------------------");
-    println!("Обновлений частиц в секунду: {:,}", particles_per_second);
+    println!("Обновлений частиц в секунду: {}", particles_per_second);
     println!("Время на обновление одной частицы: {:.2} нс", 
         total_time.as_nanos() as f64 / (particle_count as f64 * 100.0));
     
