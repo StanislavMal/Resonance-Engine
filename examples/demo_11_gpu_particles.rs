@@ -4,7 +4,7 @@
 //! Запуск: cargo run --example demo_11_gpu_particles --release
 
 use resonance_engine::gpu::GpuContext;
-use resonance_engine::{World, AttributeId};
+use resonance_engine::World;
 use pollster::block_on;
 use std::time::Instant;
 
@@ -43,41 +43,10 @@ fn main() {
     
     let start = Instant::now();
     
-    // Создаем builder для частиц
+    // Создаем builder для частиц с GPU резонатором
     let mut builder = world.entity("Particle")
         .count(particle_count)
         .with_gpu_resonator("particle_physics"); // Используем GPU шейдер
-    
-    // Инициализируем позиции и скорости случайными значениями
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    
-    for i in 0..particle_count {
-        let x = rng.gen_range(-50.0..50.0);
-        let y = rng.gen_range(-50.0..50.0);
-        let z = rng.gen_range(-50.0..50.0);
-        
-        let vx = rng.gen_range(-1.0..1.0);
-        let vy = rng.gen_range(-1.0..1.0);
-        let vz = rng.gen_range(-1.0..1.0);
-        
-        let life = rng.gen_range(0.0..1.0);
-        let r = rng.gen_range(0.5..1.0);
-        let g = rng.gen_range(0.5..1.0);
-        let b = rng.gen_range(0.5..1.0);
-        
-        builder
-            .attr_typed::<PosX>(x)
-            .attr_typed::<PosY>(y)
-            .attr_typed::<PosZ>(z)
-            .attr_typed::<VelX>(vx)
-            .attr_typed::<VelY>(vy)
-            .attr_typed::<VelZ>(vz)
-            .attr_typed::<Life>(life)
-            .attr_typed::<ColorR>(r)
-            .attr_typed::<ColorG>(g)
-            .attr_typed::<ColorB>(b);
-    }
     
     builder.done();
     
@@ -85,6 +54,7 @@ fn main() {
     println!("✅ Частицы созданы за {:?}", creation_time);
 
     // Синхронизируем данные с GPU перед первым тиком
+    // В полной версии здесь нужно инициализировать данные случайными значениями
     world.sync_all_to_gpu(&mut gpu_ctx);
     println!("✅ Данные синхронизированы с GPU\n");
 

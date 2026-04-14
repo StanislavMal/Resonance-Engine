@@ -2,7 +2,6 @@
 //! GpuContext - manages wgpu Device, Queue and archetype buffers
 
 use crate::archetype::ArchetypeId;
-use crate::storage::FloatOffset;
 use crate::world::World;
 use wgpu::{CommandEncoder, Device, Queue};
 use std::sync::Arc;

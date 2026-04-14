@@ -1,49 +1,37 @@
-# Dependencies
-target/
-Cargo.lock
-
+```rust
 # Compiled and build artifacts
 *.o
 *.obj
-*.exe
-*.dll
-*.so
 *.a
-*.out
+*.lib
+*.so
+*.dylib
+*.dll
+target/
+
+# Dependencies
+Cargo.lock
+vendor/
 
 # Logs and temp files
 *.log
 *.tmp
+
+# Editors
+.vscode/
+.idea/
 *.swp
+*.swo
 
 # Environment
 .env
 .env.local
 *.env.*
 
-# Editors
-.vscode/
-.idea/
-
 # Coverage
 coverage/
 htmlcov/
 .coverage
-
-# Python specific
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.so
-.PyInstaller/
-.buildozer/
-.mypy_cache/
-.pytest_cache/
-
-# Rust specific
-**/*.rs.bk
 
 # Compression
 *.zip
@@ -68,3 +56,4 @@ __pycache__/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
+```
