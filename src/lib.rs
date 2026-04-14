@@ -20,7 +20,7 @@ pub mod world;
 
 // ─── Core Re-exports ─────────────────────────────
 pub use accessor::{read_at, write_at, AttrOffset, EntityAccessor, EntityRef};
-pub use archetype::{ArchetypeId, AttributeId, EntityId};
+pub use archetype::{ArchetypeId, EntityId};
 pub use context::{CommandBuffer, NodeContext, SpawnRequest, WriteRequest};
 pub use entity::{EntityBuilder, EntityHandle};
 pub use resonator::{BoundField, DynResonator, FieldMap, Resonator, ResonatorExt, GpuDispatchConfig};

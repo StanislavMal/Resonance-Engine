@@ -44,7 +44,7 @@ fn main() {
     let start = Instant::now();
     
     // Создаем builder для частиц с GPU резонатором
-    world.entity("Particle")
+    let _handles = world.entity("Particle")
         .count(particle_count)
         .with_gpu_resonator("particle_physics") // Используем GPU шейдер
         .done();
