@@ -44,10 +44,10 @@ fn main() {
     let start = Instant::now();
     
     // Создаем builder для частиц с GPU резонатором
+    // ВАЖНО: with_gpu_resonator должен вызываться ДО count() или done()
     let _handles = world.entity("Particle")
-        .count(particle_count)
         .with_gpu_resonator("particle_physics") // Используем GPU шейдер
-        .done();
+        .count(particle_count);
     
     let creation_time = start.elapsed();
     println!("✅ Частицы созданы за {:?}", creation_time);
