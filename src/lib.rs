@@ -20,11 +20,11 @@ pub mod world;
 
 // ─── Core Re-exports ─────────────────────────────
 pub use accessor::{read_at, write_at, AttrOffset, EntityAccessor, EntityRef};
-pub use archetype::EntityId;
+pub use archetype::{ArchetypeId, AttributeId, EntityId};
 pub use context::{CommandBuffer, NodeContext, SpawnRequest, WriteRequest};
-pub use entity::EntityHandle;
-pub use resonator::{BoundField, DynResonator, FieldMap, Resonator, ResonatorExt};
-pub use storage::{BufferMode, FieldIndex};
+pub use entity::{EntityBuilder, EntityHandle};
+pub use resonator::{BoundField, DynResonator, FieldMap, Resonator, ResonatorExt, GpuDispatchConfig};
+pub use storage::{BufferMode, FieldIndex, FloatOffset, Storage, StoragePtr};
 pub use typed_attrs::{EnumAttr, TypedAttr};
 pub use world::{BuildWarning, World};
 
@@ -34,7 +34,9 @@ pub use world::{BuildWarning, World};
 // Пользователи могут использовать define_attr! и define_tag! напрямую.
 
 // ─── GPU Re-exports ───────────────────────────────
-pub use gpu::{GpuContext, GpuArchetypeBuffer, GpuBufferRing, GpuShader, GpuDispatchConfig, GpuExecutor};
+pub use gpu::{GpuContext, GpuExecutor};
+pub use gpu::shader::{GpuShader, ShaderRegistry};
+pub use gpu::buffer::{GpuArchetypeBuffer, GpuBufferRing};
 pub use gpu::executor::{GpuResonatorExt, ResonatorGpu};
 
 // ─── Extension Traits ─────────────────────────────

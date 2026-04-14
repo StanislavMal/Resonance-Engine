@@ -1,21 +1,23 @@
-```rust
+```
 # Compiled and build artifacts
 *.o
 *.obj
-*.a
-*.lib
-*.so
-*.dylib
+*.exe
 *.dll
+*.so
+*.a
+*.out
 target/
 
 # Dependencies
 Cargo.lock
-vendor/
+**/vendor/
+**/deps/
 
 # Logs and temp files
 *.log
 *.tmp
+*.swp
 
 # Editors
 .vscode/
@@ -26,34 +28,13 @@ vendor/
 # Environment
 .env
 .env.local
-*.env.*
+.env.*
 
 # Coverage
 coverage/
 htmlcov/
 .coverage
 
-# Compression
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
+# Rust-specific
+**/*.rs.bk
 ```

@@ -3,6 +3,7 @@
 
 use crate::archetype::ArchetypeId;
 use crate::world::World;
+use crate::storage::FloatOffset;
 use wgpu::{CommandEncoder, Device, Queue};
 use std::sync::Arc;
 
