@@ -29,9 +29,9 @@ pub use typed_attrs::{EnumAttr, TypedAttr};
 pub use world::{BuildWarning, World};
 
 // ─── Macro Re-exports ────────────────────────────
-// Экспорт макросов из корня crate, так как #[macro_export] экспортирует их туда
-pub use crate::define_attr;
-pub use crate::define_tag;
+// Макросы с #[macro_export] уже экспортируются в корень crate автоматически.
+// Эти строки удалены, чтобы избежать ошибки "defined multiple times".
+// Пользователи могут использовать define_attr! и define_tag! напрямую.
 
 // ─── GPU Re-exports ───────────────────────────────
 pub use gpu::{GpuContext, GpuArchetypeBuffer, GpuBufferRing, GpuShader, GpuDispatchConfig, GpuExecutor};

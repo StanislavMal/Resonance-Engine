@@ -99,6 +99,7 @@ impl GpuContext {
 
         // Get CPU data pointer
         let floats_per_entity = archetype.schema.floats_per_entity as usize;
+        let storage_ptr = archetype.storage.raw_ptrs();
         
         // Read from staging slot and upload to GPU
         ring.upload_from_cpu(&self.device, &self.queue, |staging_slice| {
@@ -106,9 +107,9 @@ impl GpuContext {
             for (_, _, float_offset) in archetype.alive_iter() {
                 for field_idx in 0..floats_per_entity {
                     let abs_offset = float_offset.0 as usize + field_idx;
-                    if abs_offset < sp.float_len {
+                    if abs_offset < storage_ptr.float_len {
                         unsafe {
-                            staging_slice[offset] = *sp.read_floats.add(abs_offset);
+                            staging_slice[offset] = *storage_ptr.read_floats.add(abs_offset);
                         }
                     }
                     offset += 1;

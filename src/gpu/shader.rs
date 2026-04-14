@@ -38,7 +38,7 @@ impl GpuShader {
             label: Some(&format!("Pipeline_{}", name)),
             layout: Some(&pipeline_layout),
             module: &module,
-            entry_point: Some(config.entry_point),
+            entry_point: config.entry_point,
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });

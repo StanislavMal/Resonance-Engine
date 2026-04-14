@@ -155,7 +155,8 @@ impl GpuBufferRing {
 
         {
             let slice = temp_buffer.slice(..).get_mapped_range_mut();
-            let f64_slice: &mut [f64] = bytemuck::cast_slice_mut(&mut &*slice);
+            let byte_slice: &[u8] = &slice;
+            let f64_slice: &mut [f64] = bytemuck::cast_slice_mut(byte_slice);
             fill_data(f64_slice);
         }
 

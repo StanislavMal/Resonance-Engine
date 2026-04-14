@@ -6,6 +6,7 @@ use crate::interning::InternedStr;
 use crate::resonator::{DynResonator, FieldMap, GpuDispatchConfig};
 use crate::storage::FieldIndex;
 use crate::typed_attrs::TypedAttr;
+use std::sync::Arc;
 
 /// External handle to an entity
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

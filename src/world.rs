@@ -6,6 +6,7 @@ use crate::archetype::*;
 use crate::context::{CommandBuffer, NodeContext};
 use crate::entity::{EntityBuilder, EntityHandle, PendingEntity};
 use crate::gpu::{GpuContext, GpuExecutor};
+use crate::gpu::shader::builtins;
 use crate::interning::{InternedStr, StringInterner};
 use crate::resonator::{DynResonator, FieldMap, Resonator};
 use crate::scheduler::{self, SchedulerConfig, TickResult};
@@ -166,6 +167,7 @@ impl World {
             schema: ArchetypeSchema::new(),
             defaults: Vec::new(),
             resonator_factories: Vec::new(),
+            gpu_config: None,
         }
     }
 
@@ -988,12 +990,18 @@ impl World {
         let mut gpu_commands_submitted = 0usize;
         let mut gpu_entities_processed = 0u64;
 
-        // Step 1: Sync dirty archetype data from CPU to GPU
-        for (arch_idx, archetype) in self.archetypes.iter_mut().enumerate() {
-            if archetype.needs_gpu_sync && archetype.gpu_resonator.is_some() {
-                gpu_ctx.sync_archetype(self, arch_idx);
-                archetype.needs_gpu_sync = false;
-            }
+        // Step 1: Collect indices for sync (avoid borrow conflict)
+        let sync_indices: Vec<usize> = self.archetypes
+            .iter()
+            .enumerate()
+            .filter(|(_, arch)| arch.needs_gpu_sync && arch.gpu_resonator.is_some())
+            .map(|(idx, _)| idx)
+            .collect();
+        
+        // Now sync using collected indices
+        for arch_idx in sync_indices {
+            gpu_ctx.sync_archetype(self, arch_idx);
+            self.archetypes[arch_idx].needs_gpu_sync = false;
         }
 
         // Step 2: Collect GPU and CPU tasks
@@ -1098,11 +1106,16 @@ impl World {
 
     /// Sync all archetype data to GPU buffers (call before first tick_hybrid)
     pub fn sync_all_to_gpu(&mut self, gpu_ctx: &mut GpuContext) {
-        for (arch_idx, archetype) in self.archetypes.iter_mut().enumerate() {
-            if archetype.gpu_resonator.is_some() && archetype.alive_count() > 0 {
-                gpu_ctx.sync_archetype(self, arch_idx);
-                archetype.needs_gpu_sync = false;
-            }
+        let sync_indices: Vec<usize> = self.archetypes
+            .iter()
+            .enumerate()
+            .filter(|(_, arch)| arch.gpu_resonator.is_some() && arch.alive_count() > 0)
+            .map(|(idx, _)| idx)
+            .collect();
+        
+        for arch_idx in sync_indices {
+            gpu_ctx.sync_archetype(self, arch_idx);
+            self.archetypes[arch_idx].needs_gpu_sync = false;
         }
     }
 }
