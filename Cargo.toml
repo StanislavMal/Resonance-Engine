@@ -1,0 +1,22 @@
+[package]
+name = "resonance-engine"
+version = "10.4.0"
+edition = "2024"
+description = "Resonance Engine v10.4 — high-performance simulation framework"
+
+[dependencies]
+rayon = "1.8"
+rand = "0.8"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -1,0 +1,29 @@
+# Rust
+/target
+Cargo.lock
+
+# IDE и редакторы
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Временные файлы и логи
+*.log
+*.tmp
+*.bak
+
+# Скрипт генерации контекста и его результаты
+generate_context.bat
+*.txt
+
+# Другие артефакты сборки и временные директории
+*.pdb
+*.exe
+*.dll
+*.so
+*.dylib
+*.rlib
+*.rmeta
