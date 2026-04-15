@@ -269,7 +269,6 @@ impl World {
                     self.storage.init_float(float_offset, *field, *value);
                 }
 
-                // Build resonators from registered types
                 if !resonators_built && !pe.resonator_types.is_empty() {
                     let field_map = FieldMap::new(
                         self.archetypes[arch_idx].schema.field_map.clone(),
@@ -293,6 +292,9 @@ impl World {
         self.built = true;
         self.layout_version += 1;
         self.entities_dirty = true;
+        
+        // CRITICAL FIX: Auto-refresh entity cache after build
+        self.refresh_entity_cache();
     }
 
     pub fn build_with_validation(&mut self) -> Vec<BuildWarning> {
@@ -757,12 +759,19 @@ impl World {
     }
 
     pub fn restore(&mut self, snapshot: SchemaSnapshot) -> Result<(), String> {
+        // Full state reset
         self.archetypes.clear();
+        self.archetype_signatures.clear();
         self.allocator = EntityAllocator::new();
         self.entity_locations.clear();
         self.pending_entities.clear();
         self.relations = RelationGraph::new();
-
+        self.attr_index.clear();
+        self.cached_entities.clear();
+        self.entities_dirty = true;
+        self.next_archetype_id = 0;
+        
+        // Recreate entities from snapshot (without resonators)
         for entity_snap in snapshot.entities {
             let mut builder = self.entity(&entity_snap.archetype_name);
 
