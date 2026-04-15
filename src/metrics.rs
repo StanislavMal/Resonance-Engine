@@ -2,7 +2,6 @@
 //! Enhanced metrics collection
 
 use crate::world::World;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Default)]
@@ -29,7 +28,7 @@ pub struct BenchmarkReport {
 impl BenchmarkReport {
     pub fn print(&self) {
         println!("\n╔══════════════════════════════════════════════════════════════════════╗");
-        println!("║            RESONANCE ENGINE v11.0 — METRICS REPORT                 ║");
+        println!("║            RESONANCE ENGINE v11.1 — METRICS REPORT                 ║");
         println!("╚══════════════════════════════════════════════════════════════════════╝");
 
         if !self.ticks.is_empty() {

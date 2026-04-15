@@ -1,0 +1,12 @@
+digraph Simulation {
+  rankdir=LR;
+  node [shape=box];
+
+  E0 [label="Entity 3:0", color=green];
+  E1 [label="Entity 1:0", color=green];
+  E2 [label="Entity 0:0", color=green];
+  E3 [label="Entity 2:0", color=green];
+
+  N1 -> N2 [label="EquippedBy"];
+  N2 -> N3 [label="Attacks"];
+}

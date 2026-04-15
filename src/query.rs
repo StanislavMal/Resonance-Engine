@@ -1,7 +1,9 @@
-// src/query.rs (FIX lifetime warning)
+// src/query.rs
+//! Query system with compile-time type safety
 
 use crate::entity::EntityHandle;
 use crate::interning::InternedStr;
+use crate::storage::FieldIndex;  // ← ADD THIS
 use crate::typed_attrs::TypedAttr;
 use crate::world::World;
 
@@ -13,7 +15,7 @@ pub fn with_attr<A: TypedAttr>(world: &World) -> Vec<EntityHandle> {
 
     let mut result = Vec::new();
     if let Some(locations) = world.attr_index.get(&attr_id) {
-        for &(arch_idx, _) in locations {
+        for &(arch_idx, _field_idx) in locations {
             let arch = &world.archetypes[arch_idx];
             for (_, eid, _) in arch.alive_iter() {
                 if world.is_alive(EntityHandle(eid)) {
@@ -57,9 +59,12 @@ pub fn count_with<A: TypedAttr>(world: &World) -> usize {
     world
         .attr_index
         .get(&attr_id)
-        .map(|locs| {
+        .map(|locs: &Vec<(usize, FieldIndex)>| {
             locs.iter()
-                .map(|&(ai, _)| world.archetypes[ai].alive_count())
+                .map(|&(ai, _)| {
+                    let arch = &world.archetypes[ai];  // ← FIX: explicit let binding
+                    arch.alive_count()
+                })
                 .sum()
         })
         .unwrap_or(0)

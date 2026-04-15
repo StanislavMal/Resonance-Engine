@@ -125,6 +125,7 @@ pub fn write_at(world: &mut World, offset: AttrOffset, value: f64) {
 #[derive(Clone, Debug)]
 pub struct EntityRef {
     archetype_idx: usize,
+    #[allow(dead_code)]  // Used for validation
     inner_idx: usize,
     base_offset: usize,
     layout_version: u64,

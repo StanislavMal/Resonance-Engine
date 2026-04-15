@@ -2,10 +2,8 @@
 //! Prefab system with struct-based resonators
 
 use crate::entity::EntityHandle;
-use crate::resonator::{DynResonator, FieldMap, Resonator, ResonatorFactory};
 use crate::typed_attrs::TypedAttr;
 use crate::world::World;
-use std::sync::Arc;
 
 struct PrefabAttr {
     name: &'static str,

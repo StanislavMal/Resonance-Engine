@@ -2,7 +2,6 @@
 //! Relations system for entity hierarchies and associations
 
 use crate::archetype::EntityId;
-use crate::entity::EntityHandle;
 use std::collections::HashMap;
 
 pub trait Relation: 'static {

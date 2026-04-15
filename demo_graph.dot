@@ -1,0 +1,10 @@
+digraph Simulation {
+  rankdir=LR;
+  node [shape=box];
+
+  E0 [label="Entity 0:0", color=green];
+  E1 [label="Entity 2:0", color=green];
+  E2 [label="Entity 1:0", color=green];
+
+  N2 -> N0 [label="EquippedBy"];
+}

@@ -1,9 +1,6 @@
 // benches/comprehensive.rs
-//! Comprehensive benchmark suite for Resonance Engine v11.0
-//!
-//! Run with: cargo bench --bench comprehensive
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use resonance_engine::*;
 use std::hint::black_box as bb;
 
@@ -12,8 +9,8 @@ use std::hint::black_box as bb;
 // ═══════════════════════════════════════════════════════════════
 
 define_attrs!(PosX, PosY, PosZ, VelX, VelY, VelZ);
-define_attrs!(Health, Energy, Damage);
-define_tags!(Enemy, Player);
+define_attrs!(Health, Energy, Damage, Level);  // ← ADD Level HERE
+define_tags!(Enemy, Player, Unit);  // ← ADD Unit HERE
 
 // ═══════════════════════════════════════════════════════════════
 //  RESONATORS
@@ -407,106 +404,174 @@ fn bench_serialization(c: &mut Criterion) {
 //  BENCHMARK 8: Relations
 // ═══════════════════════════════════════════════════════════════
 
-define_relation!(Parent);
+define_relation!(Parent);  // ← ADD THIS BEFORE bench_graph_queries
 
-fn bench_relations(c: &mut Criterion) {
-    let mut group = c.benchmark_group("relations");
+fn bench_graph_queries(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph/queries");
     group.sample_size(50);
 
+    for &count in &[100, 1_000, 10_000] {
+        // Setup hierarchy
+        group.bench_with_input(
+            BenchmarkId::new("hierarchy_creation", count),
+            &count,
+            |b, &count| {
+                b.iter(|| {
+                    let mut world = World::new();
+                    
+                    let root = world.entity("Root").done();
+                    
+                    let mut parents = vec![root];
+                    for _ in 0..count {
+                        let child = world.entity("Child").done();
+                        parents.push(child);
+                    }
+                    
+                    world.build();
+                    
+                    // Add relations
+                    for i in 1..parents.len() {
+                        world.add_relation::<Parent>(parents[i], parents[0]);
+                    }
+                    
+                    bb(world.alive_count());
+                });
+            },
+        );
+
+        // Benchmark: relation lookup
+        group.bench_with_input(
+            BenchmarkId::new("relation_lookup", count),
+            &count,
+            |b, &count| {
+                let mut world = World::new();
+                
+                let root = world.entity("Root").done();
+                
+                let mut children = Vec::new();
+                for _ in 0..count {
+                    let child = world.entity("Child").done();
+                    children.push(child);
+                }
+                
+                world.build();
+                
+                for &child in &children {
+                    world.add_relation::<Parent>(child, root);
+                }
+
+                b.iter(|| {
+                    let result = world.get_reverse_relations::<Parent>(root);
+                    bb(result.len());
+                });
+            },
+        );
+
+        // Benchmark: BFS traversal (simplified version)
+        group.bench_with_input(
+            BenchmarkId::new("bfs_traversal", count),
+            &count,
+            |b, &count| {
+                let mut world = World::new();
+                
+                let root = world.entity("Root").done();
+                
+                let mut all_children = Vec::new();
+                for _ in 0..count.min(1000) {
+                    let child = world.entity("Node").done();
+                    all_children.push(child);
+                }
+                
+                world.build();
+                
+                // Simple flat hierarchy
+                for &child in &all_children {
+                    world.add_relation::<Parent>(child, root);
+                }
+
+                b.iter(|| {
+                    let mut visited = std::collections::HashSet::new();
+                    let mut queue = std::collections::VecDeque::new();
+                    queue.push_back(root);
+                    visited.insert(root);
+                    
+                    let mut result = Vec::new();
+                    while let Some(current) = queue.pop_front() {
+                        let children = world.get_reverse_relations::<Parent>(current);
+                        for child in children {
+                            if visited.insert(child) {
+                                result.push(child);
+                                queue.push_back(child);
+                            }
+                        }
+                    }
+                    
+                    bb(result.len());
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BENCHMARK 11: Graph vs Traditional Queries
+// ═══════════════════════════════════════════════════════════════
+
+fn bench_graph_vs_traditional(c: &mut Criterion) {
+    let mut group = c.benchmark_group("comparison/graph_vs_traditional");
+    group.sample_size(50);
+
+    let count = 10_000;
+
+    // Setup world with hierarchy
     let mut world = World::new();
-
-    // Create hierarchy: 1 root + 1000 children
-    let root = world.entity("Root").attr_typed::<Energy>(100.0).done();
-    let mut children = Vec::new();
-
-    for _ in 0..1_000 {
-        let child = world.entity("Child").attr_typed::<Energy>(50.0).done();
-        children.push(child);
+    
+    let root = world.entity("Root").tag_typed::<Unit>().done();
+    
+    let mut all_children = Vec::new();
+    for i in 0..count {
+        let child = world
+            .entity("Child")
+            .tag_typed::<Unit>()
+            .attr_typed::<Level>(1.0)
+            .attr_typed::<PosX>(i as f64)
+            .done();
+        all_children.push(child);
     }
-
+    
     world.build();
-
-    // Add relations
-    for child in &children {
-        world.add_relation::<Parent>(*child, root);
+    
+    for &child in &all_children {
+        world.add_relation::<Parent>(child, root);
     }
 
-    // Benchmark: get relation
-    group.bench_function("get", |b| {
+    // Benchmark: Traditional tag query
+    group.bench_function("traditional_tag_query", |b| {
         b.iter(|| {
-            for child in &children {
-                let parent = world.get_relation::<Parent>(*child);
-                bb(parent);
-            }
+            let result = world.query().with::<Unit>().execute();
+            bb(result.len());
         });
     });
 
-    // Benchmark: get reverse
-    group.bench_function("get_reverse", |b| {
+    // Benchmark: Graph relation query
+    group.bench_function("graph_relation_query", |b| {
         b.iter(|| {
-            let children = world.get_reverse_relations::<Parent>(root);
-            bb(children.len());
+            let result = world.get_reverse_relations::<Parent>(root);
+            bb(result.len());
         });
     });
 
-    group.finish();
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  BENCHMARK 9: Buffer Modes
-// ═══════════════════════════════════════════════════════════════
-
-fn bench_buffer_modes(c: &mut Criterion) {
-    let mut group = c.benchmark_group("buffer_mode");
-    group.sample_size(50);
-
-    let count = 50_000;
-
-    // Single buffer
-    group.bench_function("single", |b| {
-        let mut world = World::new();
-        world.set_buffer_mode(BufferMode::Single);
-        world.register_resonator::<Physics2D>("Physics2D");
-
-        for _ in 0..count {
-            world
-                .entity("Particle")
-                .attr_typed::<PosX>(0.0)
-                .attr_typed::<PosY>(0.0)
-                .attr_typed::<VelX>(0.01)
-                .attr_typed::<VelY>(0.02)
-                .resonator_type("Physics2D")
-                .done();
-        }
-
-        world.build();
-
+    // Benchmark: Traditional filtered query
+    group.bench_function("traditional_filtered", |b| {
         b.iter(|| {
-            world.tick();
-        });
-    });
-
-    // Double buffer
-    group.bench_function("double", |b| {
-        let mut world = World::new();
-        world.set_buffer_mode(BufferMode::Double);
-        world.register_resonator::<Physics2D>("Physics2D");
-
-        for _ in 0..count {
-            world
-                .entity("Particle")
-                .attr_typed::<PosX>(0.0)
-                .attr_typed::<PosY>(0.0)
-                .attr_typed::<VelX>(0.01)
-                .attr_typed::<VelY>(0.02)
-                .resonator_type("Physics2D")
-                .done();
-        }
-
-        world.build();
-
-        b.iter(|| {
-            world.tick();
+            let result = world
+                .query()
+                .with::<Unit>()
+                .filter(|e, w| w.read_typed::<Level>(e).unwrap_or(0.0) == 1.0)
+                .execute();
+            bb(result.len());
         });
     });
 
@@ -514,7 +579,7 @@ fn bench_buffer_modes(c: &mut Criterion) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  CRITERION CONFIG
+//  CRITERION CONFIG (SINGLE DEFINITION)
 // ═══════════════════════════════════════════════════════════════
 
 criterion_group!(
@@ -526,8 +591,10 @@ criterion_group!(
     bench_spatial_queries,
     bench_query_system,
     bench_serialization,
-    bench_relations,
-    bench_buffer_modes,
+    // bench_relations,
+    // bench_buffer_modes,
+    bench_graph_queries,
+    bench_graph_vs_traditional,
 );
 
 criterion_main!(benches);

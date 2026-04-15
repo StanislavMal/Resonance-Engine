@@ -1,14 +1,15 @@
 [package]
 name = "resonance-engine"
-version = "11.0.0"
+version = "11.1.0"
 edition = "2021"
-description = "Resonance Engine v11.0 — high-performance deterministic simulation framework"
+description = "Resonance Engine v11.1 — Graph metadata layer + hot reload foundation"
 
 [dependencies]
 rayon = "1.8"
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+petgraph = "0.6"  # NEW: Graph topology
 
 [dev-dependencies]
 criterion = "0.5"
@@ -29,6 +30,10 @@ codegen-units = 1
 [[example]]
 name = "demo_v11"
 path = "examples/demo_v11.rs"
+
+[[example]]
+name = "graph_demo"
+path = "examples/graph_demo.rs"
 
 [[bench]]
 name = "comprehensive"

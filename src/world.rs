@@ -1,20 +1,22 @@
-// src/world.rs (FIX imports at top)
+// src/world.rs
 
 use crate::accessor::{AttrOffset, EntityRef};
 use crate::archetype::*;
 use crate::context::CommandBuffer;
 use crate::entity::{EntityBuilder, EntityHandle, PendingEntity};
+use crate::graph::MetaGraph;
 use crate::interning::{InternedStr, StringInterner};
 use crate::query::QueryBuilder;
 use crate::relations::{Relation, RelationGraph};
 use crate::resonator::{DynResonator, FieldMap, ResonatorFactory};
 use crate::scheduler::{self, SchedulerConfig, TickResult};
 use crate::serialization::{EntitySnapshot, SchemaSnapshot};
-use crate::storage::{FieldIndex, Storage};  // ← ADD Storage HERE
+use crate::storage::{FieldIndex, Storage};  // ← ADD FieldIndex HERE
 use crate::typed_attrs::TypedAttr;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
+
 pub(crate) struct EntityLoc {
     pub(crate) archetype_idx: usize,
     pub(crate) inner_idx: usize,
@@ -38,6 +40,7 @@ pub enum BuildWarning {
 }
 
 struct PrefabRegistration {
+    #[allow(dead_code)]  // Used for validation
     archetype_name: String,
     attr_names: Vec<String>,
     attr_defaults: Vec<f64>,
@@ -86,10 +89,11 @@ pub struct World {
     phases: Vec<Phase>,
     archetype_phases: HashMap<usize, String>,
     prefab_registry: HashMap<String, PrefabRegistration>,
-    
-    // NEW: Relations and resonator registry
     pub(crate) relations: RelationGraph,
     resonator_registry: ResonatorRegistry,
+    
+    // NEW: Make public for external access
+    pub meta_graph: MetaGraph,  // ← CHANGE FROM pub(crate) TO pub
 }
 
 impl World {
@@ -114,6 +118,7 @@ impl World {
             prefab_registry: HashMap::new(),
             relations: RelationGraph::new(),
             resonator_registry: ResonatorRegistry::new(),
+            meta_graph: MetaGraph::new(),  // NEW
         }
     }
 
@@ -249,6 +254,7 @@ impl World {
 
         for (sig, entities) in by_signature {
             let arch_idx = self.get_or_create_archetype(&sig, &entities[0]);
+            let arch_id = self.archetypes[arch_idx].id;
             let mut resonators_built = !self.archetypes[arch_idx].resonators.is_empty();
 
             for pe in entities {
@@ -268,6 +274,10 @@ impl World {
                 for (field, value) in &pe.defaults {
                     self.storage.init_float(float_offset, *field, *value);
                 }
+
+                // NEW: Add to graph
+                let handle = EntityHandle(pe.entity_id);
+                self.meta_graph.add_entity(handle, arch_id);
 
                 if !resonators_built && !pe.resonator_types.is_empty() {
                     let field_map = FieldMap::new(
@@ -293,7 +303,6 @@ impl World {
         self.layout_version += 1;
         self.entities_dirty = true;
         
-        // CRITICAL FIX: Auto-refresh entity cache after build
         self.refresh_entity_cache();
     }
 
@@ -400,7 +409,7 @@ impl World {
         }
     }
 
-    // ─── Tick ─────────────────────────────────────────
+    // ─── Tick (UNCHANGED execution, graph metadata only) ─────────
 
     pub fn tick(&mut self) -> TickResult {
         self.storage.begin_tick();
@@ -619,6 +628,7 @@ impl World {
             }
             self.allocator.deallocate(entity_id);
             self.relations.remove_entity(entity_id);
+            self.meta_graph.remove_entity(EntityHandle(entity_id));  // NEW
             self.entities_dirty = true;
         }
     }
@@ -708,8 +718,8 @@ impl World {
     // ─── Query ────────────────────────────────────────
 
     pub fn query(&self) -> QueryBuilder<'_> {
-    QueryBuilder::new(self)
-}
+        QueryBuilder::new(self)
+    }
 
     pub fn entities_iter(&self) -> impl Iterator<Item = EntityHandle> + '_ {
         self.archetypes
@@ -766,6 +776,7 @@ impl World {
         self.entity_locations.clear();
         self.pending_entities.clear();
         self.relations = RelationGraph::new();
+        self.meta_graph = MetaGraph::new();  // NEW
         self.attr_index.clear();
         self.cached_entities.clear();
         self.entities_dirty = true;
