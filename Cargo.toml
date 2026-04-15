@@ -29,3 +29,8 @@ codegen-units = 1
 [[example]]
 name = "demo_v11"
 path = "examples/demo_v11.rs"
+
+[[bench]]
+name = "comprehensive"
+path = "benches/comprehensive.rs"
+harness = false
