@@ -1,12 +1,8 @@
 // src/prefab.rs
-//! Prefab system — template-based batch entity creation
-//!
-//! Resonator factories stored as Fn (not FnOnce) so they can be called
-//! multiple times for batch spawning. Factories produce Arc<DynResonator>
-//! which is shared across all entities of same archetype.
+//! Prefab system with struct-based resonators
 
 use crate::entity::EntityHandle;
-use crate::resonator::{DynResonator, FieldMap, Resonator};
+use crate::resonator::{DynResonator, FieldMap, Resonator, ResonatorFactory};
 use crate::typed_attrs::TypedAttr;
 use crate::world::World;
 use std::sync::Arc;
@@ -19,32 +15,41 @@ struct PrefabAttr {
 pub struct Prefab {
     name: &'static str,
     attrs: Vec<PrefabAttr>,
-    /// Factories that produce resonators given field bindings
-    resonator_factories: Vec<Arc<dyn Fn(&FieldMap) -> Arc<DynResonator> + Send + Sync>>,
+    resonator_types: Vec<&'static str>,
 }
 
 impl Prefab {
     pub fn new(name: &'static str) -> Self {
-        Self { name, attrs: Vec::new(), resonator_factories: Vec::new() }
+        Self {
+            name,
+            attrs: Vec::new(),
+            resonator_types: Vec::new(),
+        }
     }
 
     pub fn attr(mut self, name: &'static str, default: f64) -> Self {
-        self.attrs.push(PrefabAttr { name, default_value: default });
+        self.attrs.push(PrefabAttr {
+            name,
+            default_value: default,
+        });
         self
     }
 
-    pub fn attr_typed<A: TypedAttr>(self, default: f64) -> Self { self.attr(A::NAME, default) }
-    pub fn tag(self, name: &'static str) -> Self { self.attr(name, 1.0) }
-    pub fn tag_typed<A: TypedAttr>(self) -> Self { self.tag(A::NAME) }
+    pub fn attr_typed<A: TypedAttr>(self, default: f64) -> Self {
+        self.attr(A::NAME, default)
+    }
 
-    pub fn on<F, R>(mut self, factory: F) -> Self
-    where
-        F: Fn(&FieldMap) -> R + Send + Sync + 'static,
-        R: Resonator,
-    {
-        self.resonator_factories.push(Arc::new(move |map: &FieldMap| {
-            Arc::new(factory(map)) as Arc<DynResonator>
-        }));
+    pub fn tag(self, name: &'static str) -> Self {
+        self.attr(name, 1.0)
+    }
+
+    pub fn tag_typed<A: TypedAttr>(self) -> Self {
+        self.tag(A::NAME)
+    }
+
+    /// Register a resonator type (must be registered in World first)
+    pub fn with_resonator(mut self, type_name: &'static str) -> Self {
+        self.resonator_types.push(type_name);
         self
     }
 
@@ -56,22 +61,17 @@ impl Prefab {
         let mut builder = world.entity(self.name);
 
         for attr in &self.attrs {
-            let value = overrides.iter()
+            let value = overrides
+                .iter()
                 .find(|(n, _)| *n == attr.name)
                 .map(|(_, v)| *v)
                 .unwrap_or(attr.default_value);
             builder = builder.attr(attr.name, value);
         }
 
-        // Clone factory Arcs for the FnOnce boundary of EntityBuilder::on
-        for factory_arc in &self.resonator_factories {
-            let f = Arc::clone(factory_arc);
-            builder = builder.on(move |map: &FieldMap| {
-                // Call the Arc<Fn> to get the resonator
-                // But we need to return a Resonator impl, not Arc<DynResonator>
-                // Wrap in a struct that delegates
-                SharedResonator { inner: f(map) }
-            });
+        // Add resonator type markers
+        for resonator_type in &self.resonator_types {
+            builder = builder.resonator_type(resonator_type);
         }
 
         builder.done()
@@ -90,18 +90,9 @@ impl Prefab {
     where
         F: FnMut(usize) -> Vec<(&'static str, f64)>,
     {
-        (0..count).map(|i| self.spawn_with(world, &configure(i))).collect()
-    }
-}
-
-/// Wrapper to make Arc<DynResonator> implement Resonator
-struct SharedResonator {
-    inner: Arc<DynResonator>,
-}
-
-impl Resonator for SharedResonator {
-    fn apply(&self, ctx: &mut crate::context::NodeContext) {
-        self.inner.apply(ctx);
+        (0..count)
+            .map(|i| self.spawn_with(world, &configure(i)))
+            .collect()
     }
 }
 

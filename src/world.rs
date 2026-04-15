@@ -1,19 +1,20 @@
-// src/world.rs
-//! World — main simulation container
+// src/world.rs (FIX imports at top)
 
 use crate::accessor::{AttrOffset, EntityRef};
 use crate::archetype::*;
-use crate::context::{CommandBuffer, NodeContext};
+use crate::context::CommandBuffer;
 use crate::entity::{EntityBuilder, EntityHandle, PendingEntity};
 use crate::interning::{InternedStr, StringInterner};
-use crate::resonator::{DynResonator, FieldMap, Resonator};
+use crate::query::QueryBuilder;
+use crate::relations::{Relation, RelationGraph};
+use crate::resonator::{DynResonator, FieldMap, ResonatorFactory};
 use crate::scheduler::{self, SchedulerConfig, TickResult};
-use crate::storage::{FieldIndex, Storage};
+use crate::serialization::{EntitySnapshot, SchemaSnapshot};
+use crate::storage::{FieldIndex, Storage};  // ← ADD Storage HERE
 use crate::typed_attrs::TypedAttr;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-
 pub(crate) struct EntityLoc {
     pub(crate) archetype_idx: usize,
     pub(crate) inner_idx: usize,
@@ -36,13 +37,35 @@ pub enum BuildWarning {
     },
 }
 
-/// Registered prefab schema for deferred spawning from resonators
 struct PrefabRegistration {
     archetype_name: String,
     attr_names: Vec<String>,
     attr_defaults: Vec<f64>,
-    /// Index into archetype_signatures (resolved after first build)
     archetype_idx: Option<usize>,
+}
+
+/// Registry for resonator factories (struct-based)
+struct ResonatorRegistry {
+    factories: HashMap<&'static str, Box<dyn Fn(&FieldMap) -> Arc<DynResonator> + Send + Sync>>,
+}
+
+impl ResonatorRegistry {
+    fn new() -> Self {
+        Self {
+            factories: HashMap::new(),
+        }
+    }
+    
+    fn register<R: ResonatorFactory>(&mut self, name: &'static str) {
+        self.factories.insert(
+            name,
+            Box::new(|map: &FieldMap| Arc::new(R::create(map)) as Arc<DynResonator>),
+        );
+    }
+    
+    fn create(&self, name: &str, map: &FieldMap) -> Option<Arc<DynResonator>> {
+        self.factories.get(name).map(|factory| factory(map))
+    }
 }
 
 pub struct World {
@@ -52,7 +75,6 @@ pub struct World {
     pub(crate) allocator: EntityAllocator,
     pub(crate) pending_entities: Vec<PendingEntity>,
     pub(crate) config: SchedulerConfig,
-
     pub(crate) entity_locations: Vec<Option<EntityLoc>>,
     archetype_signatures: HashMap<Vec<InternedStr>, usize>,
     next_archetype_id: u32,
@@ -60,14 +82,14 @@ pub struct World {
     layout_version: u64,
     cached_entities: Vec<EntityHandle>,
     entities_dirty: bool,
-
     pub attr_index: HashMap<InternedStr, Vec<(usize, FieldIndex)>>,
-
     phases: Vec<Phase>,
     archetype_phases: HashMap<usize, String>,
-
-    /// Registered prefab schemas for defer_spawn
     prefab_registry: HashMap<String, PrefabRegistration>,
+    
+    // NEW: Relations and resonator registry
+    pub(crate) relations: RelationGraph,
+    resonator_registry: ResonatorRegistry,
 }
 
 impl World {
@@ -90,17 +112,68 @@ impl World {
             phases: Vec::new(),
             archetype_phases: HashMap::new(),
             prefab_registry: HashMap::new(),
+            relations: RelationGraph::new(),
+            resonator_registry: ResonatorRegistry::new(),
         }
+    }
+
+    // ─── Resonator Registration ───────────────────────
+
+    /// Register a struct-based resonator type
+    pub fn register_resonator<R: ResonatorFactory>(&mut self, type_name: &'static str) {
+        self.resonator_registry.register::<R>(type_name);
     }
 
     // ─── Entity Lifecycle ─────────────────────────────
 
-    /// Check if entity is alive with full generation validation — O(1).
-    ///
-    /// Returns false if entity was despawned or handle has stale generation.
     #[inline]
     pub fn is_alive(&self, entity: EntityHandle) -> bool {
         self.allocator.is_alive(entity.0)
+    }
+
+    // ─── Relations ────────────────────────────────────
+
+    pub fn add_relation<R: Relation>(&mut self, source: EntityHandle, target: EntityHandle) {
+        if self.is_alive(source) && self.is_alive(target) {
+            self.relations.add::<R>(source.0, target.0);
+        }
+    }
+
+    pub fn get_relation<R: Relation>(&self, source: EntityHandle) -> Option<EntityHandle> {
+        self.relations
+            .get::<R>(source.0)
+            .filter(|&eid| self.allocator.is_alive(eid))
+            .map(EntityHandle)
+    }
+
+    pub fn get_all_relations<R: Relation>(&self, source: EntityHandle) -> Vec<EntityHandle> {
+        self.relations
+            .get_all::<R>(source.0)
+            .into_iter()
+            .filter(|&eid| self.allocator.is_alive(eid))
+            .map(EntityHandle)
+            .collect()
+    }
+    
+    pub fn get_reverse_relations<R: Relation>(&self, target: EntityHandle) -> Vec<EntityHandle> {
+        self.relations
+            .get_reverse::<R>(target.0)
+            .into_iter()
+            .filter(|&eid| self.allocator.is_alive(eid))
+            .map(EntityHandle)
+            .collect()
+    }
+
+    pub fn remove_relation<R: Relation>(&mut self, source: EntityHandle, target: EntityHandle) {
+        self.relations.remove::<R>(source.0, target.0);
+    }
+    
+    pub fn remove_all_relations<R: Relation>(&mut self, source: EntityHandle) {
+        self.relations.remove_all::<R>(source.0);
+    }
+    
+    pub fn has_relation<R: Relation>(&self, source: EntityHandle) -> bool {
+        self.relations.has::<R>(source.0)
     }
 
     // ─── Phase Management ──────────────────────────────
@@ -121,13 +194,8 @@ impl World {
         }
     }
 
-    // ─── Prefab Registration (for defer_spawn) ────────
+    // ─── Prefab Registration ──────────────────────────
 
-    /// Register a prefab schema so that `defer_spawn("Name", overrides)` works.
-    ///
-    /// Must be called before the first tick that uses defer_spawn with this name.
-    /// The prefab must have been previously created and built at least once so
-    /// its archetype exists.
     pub fn register_spawnable(&mut self, name: &str, attr_names: &[&str], defaults: &[f64]) {
         assert_eq!(
             attr_names.len(),
@@ -164,7 +232,7 @@ impl World {
             name: name_id,
             schema: ArchetypeSchema::new(),
             defaults: Vec::new(),
-            resonator_factories: Vec::new(),
+            resonator_types: Vec::new(),
         }
     }
 
@@ -186,8 +254,7 @@ impl World {
             for pe in entities {
                 let floats_per = self.archetypes[arch_idx].schema.floats_per_entity as usize;
                 let float_offset = self.storage.alloc_floats(floats_per);
-                let inner_idx =
-                    self.archetypes[arch_idx].add_entity(pe.entity_id, float_offset);
+                let inner_idx = self.archetypes[arch_idx].add_entity(pe.entity_id, float_offset);
 
                 let eid_idx = pe.entity_id.index as usize;
                 if self.entity_locations.len() <= eid_idx {
@@ -202,16 +269,20 @@ impl World {
                     self.storage.init_float(float_offset, *field, *value);
                 }
 
-                if !resonators_built && !pe.resonator_factories.is_empty() {
+                // Build resonators from registered types
+                if !resonators_built && !pe.resonator_types.is_empty() {
                     let field_map = FieldMap::new(
                         self.archetypes[arch_idx].schema.field_map.clone(),
                         self.interner.clone_for_read(),
                     );
-                    let mut resonators = Vec::new();
-                    for factory in pe.resonator_factories {
-                        resonators.push(factory(&field_map));
+                    
+                    for type_name in &pe.resonator_types {
+                        if let Some(resonator) = self.resonator_registry.create(type_name, &field_map) {
+                            self.archetypes[arch_idx].resonators.push(resonator);
+                        } else {
+                            eprintln!("Warning: Resonator type '{}' not registered", type_name);
+                        }
                     }
-                    self.archetypes[arch_idx].resonators = resonators;
                     resonators_built = true;
                 }
             }
@@ -255,8 +326,7 @@ impl World {
             if let Some(&arch_idx) = self.archetype_signatures.get(&sig) {
                 let floats_per = self.archetypes[arch_idx].schema.floats_per_entity as usize;
                 let float_offset = self.storage.alloc_floats(floats_per);
-                let inner_idx =
-                    self.archetypes[arch_idx].add_entity(pe.entity_id, float_offset);
+                let inner_idx = self.archetypes[arch_idx].add_entity(pe.entity_id, float_offset);
 
                 let eid_idx = pe.entity_id.index as usize;
                 if self.entity_locations.len() <= eid_idx {
@@ -358,13 +428,11 @@ impl World {
 
         self.storage.commit();
 
-        // Process despawns
         total_result.despawn_requests = all_despawns.len() as u64;
         for entity_id in all_despawns {
             self.despawn_internal(entity_id);
         }
 
-        // Process deferred commands
         self.process_commands(all_commands);
 
         total_result
@@ -419,7 +487,6 @@ impl World {
             }
         }
 
-        // Unassigned archetypes
         let unassigned: Vec<usize> = (0..self.archetypes.len())
             .filter(|idx| !self.archetype_phases.contains_key(idx))
             .collect();
@@ -428,11 +495,7 @@ impl World {
             let results: Vec<_> = unassigned
                 .par_iter()
                 .map(|&arch_idx| {
-                    scheduler::execute_archetype(
-                        &self.archetypes[arch_idx],
-                        sp,
-                        &self.config,
-                    )
+                    scheduler::execute_archetype(&self.archetypes[arch_idx], sp, &self.config)
                 })
                 .collect();
             for batch_result in results {
@@ -444,11 +507,8 @@ impl World {
             }
         } else {
             for &arch_idx in &unassigned {
-                let batch_result = scheduler::execute_archetype(
-                    &self.archetypes[arch_idx],
-                    sp,
-                    &self.config,
-                );
+                let batch_result =
+                    scheduler::execute_archetype(&self.archetypes[arch_idx], sp, &self.config);
                 total_result.total_calls += batch_result.calls;
                 total_result.entities_processed += batch_result.processed;
                 total_result.dirty_count += batch_result.dirty;
@@ -469,33 +529,29 @@ impl World {
         total_result
     }
 
-    /// Process deferred commands from resonators
     fn process_commands(&mut self, commands: CommandBuffer) {
-        // 1. Deferred writes
+        // Validate and apply deferred writes
         for write in commands.write_requests {
-            self.storage.write_abs(write.target_offset.0, write.value);
+            if write.target_offset.validate(self) {
+                self.storage.write_abs(write.target_offset.offset, write.value);
+            }
         }
 
-        // 2. Deferred despawns (of other entities)
         for entity_id in commands.despawn_requests {
             self.despawn_internal(entity_id);
         }
 
-        // 3. Deferred spawns
         if !commands.spawn_requests.is_empty() {
             for spawn in commands.spawn_requests {
                 self.spawn_deferred(&spawn.archetype_name, &spawn.overrides);
             }
-            // Process any newly added pending entities
             if !self.pending_entities.is_empty() {
                 self.spawn_runtime();
             }
         }
     }
 
-    /// Spawn an entity from a registered prefab with overrides
     fn spawn_deferred(&mut self, archetype_name: &str, overrides: &[(String, f64)]) {
-        // Look up registered prefab
         let reg = match self.prefab_registry.get(archetype_name) {
             Some(r) => r,
             None => {
@@ -534,7 +590,6 @@ impl World {
             inner_idx,
         });
 
-        // Apply defaults
         for (i, attr_name) in reg.attr_names.iter().enumerate() {
             if let Some(interned) = self.interner.find(attr_name) {
                 if let Some(field) = self.archetypes[arch_idx].schema.find_field(interned) {
@@ -561,6 +616,7 @@ impl World {
                 self.archetypes[loc.archetype_idx].remove_entity(loc.inner_idx);
             }
             self.allocator.deallocate(entity_id);
+            self.relations.remove_entity(entity_id);
             self.entities_dirty = true;
         }
     }
@@ -608,12 +664,7 @@ impl World {
         self.write_by_id(entity, attr_id, value)
     }
 
-    fn write_by_id(
-        &mut self,
-        entity: EntityHandle,
-        attr_id: InternedStr,
-        value: f64,
-    ) -> bool {
+    fn write_by_id(&mut self, entity: EntityHandle, attr_id: InternedStr, value: f64) -> bool {
         if !self.allocator.is_alive(entity.0) {
             return false;
         }
@@ -636,76 +687,6 @@ impl World {
         true
     }
 
-    pub fn read_batch_2<A: TypedAttr, B: TypedAttr>(
-        &self,
-        entities: &[EntityHandle],
-    ) -> Vec<(Option<f64>, Option<f64>)> {
-        let attr_a = self.interner.find(A::NAME);
-        let attr_b = self.interner.find(B::NAME);
-        entities
-            .iter()
-            .map(|entity| {
-                if !self.allocator.is_alive(entity.0) {
-                    return (None, None);
-                }
-                let eid_idx = entity.0.index as usize;
-                let loc = match self.entity_locations.get(eid_idx).and_then(|l| l.as_ref()) {
-                    Some(l) => l,
-                    None => return (None, None),
-                };
-                let arch = &self.archetypes[loc.archetype_idx];
-                if !arch.is_alive(loc.inner_idx) {
-                    return (None, None);
-                }
-                let offset = arch.float_offsets[loc.inner_idx];
-                let va = attr_a
-                    .and_then(|id| arch.schema.find_field(id))
-                    .map(|field| self.storage.read_float(offset, field));
-                let vb = attr_b
-                    .and_then(|id| arch.schema.find_field(id))
-                    .map(|field| self.storage.read_float(offset, field));
-                (va, vb)
-            })
-            .collect()
-    }
-
-    pub fn read_batch_3<A: TypedAttr, B: TypedAttr, C: TypedAttr>(
-        &self,
-        entities: &[EntityHandle],
-    ) -> Vec<(Option<f64>, Option<f64>, Option<f64>)> {
-        let attr_a = self.interner.find(A::NAME);
-        let attr_b = self.interner.find(B::NAME);
-        let attr_c = self.interner.find(C::NAME);
-        entities
-            .iter()
-            .map(|entity| {
-                if !self.allocator.is_alive(entity.0) {
-                    return (None, None, None);
-                }
-                let eid_idx = entity.0.index as usize;
-                let loc = match self.entity_locations.get(eid_idx).and_then(|l| l.as_ref()) {
-                    Some(l) => l,
-                    None => return (None, None, None),
-                };
-                let arch = &self.archetypes[loc.archetype_idx];
-                if !arch.is_alive(loc.inner_idx) {
-                    return (None, None, None);
-                }
-                let offset = arch.float_offsets[loc.inner_idx];
-                let va = attr_a
-                    .and_then(|id| arch.schema.find_field(id))
-                    .map(|field| self.storage.read_float(offset, field));
-                let vb = attr_b
-                    .and_then(|id| arch.schema.find_field(id))
-                    .map(|field| self.storage.read_float(offset, field));
-                let vc = attr_c
-                    .and_then(|id| arch.schema.find_field(id))
-                    .map(|field| self.storage.read_float(offset, field));
-                (va, vb, vc)
-            })
-            .collect()
-    }
-
     pub fn despawn(&mut self, entity: EntityHandle) {
         if self.allocator.is_alive(entity.0) {
             self.despawn_internal(entity.0);
@@ -722,7 +703,11 @@ impl World {
         crate::accessor::EntityAccessor::resolve::<A>(self, entity)
     }
 
-    // ─── Queries ──────────────────────────────────────
+    // ─── Query ────────────────────────────────────────
+
+    pub fn query(&self) -> QueryBuilder<'_> {
+    QueryBuilder::new(self)
+}
 
     pub fn entities_iter(&self) -> impl Iterator<Item = EntityHandle> + '_ {
         self.archetypes
@@ -745,74 +730,72 @@ impl World {
         self.archetypes.iter().map(|a| a.alive_count()).sum()
     }
 
+    // ─── Serialization ────────────────────────────────
+
+    pub fn snapshot(&self) -> SchemaSnapshot {
+        let mut snapshot = SchemaSnapshot::new(self.layout_version);
+
+        for arch in &self.archetypes {
+            for (_, eid, offset) in arch.alive_iter() {
+                let mut entity_snap = EntitySnapshot::new(
+                    eid.index,
+                    eid.generation,
+                    arch.name.clone(),
+                );
+
+                for (&attr_id, &field_idx) in &arch.schema.field_map {
+                    let name = self.interner.resolve(attr_id).to_string();
+                    let value = self.storage.read_float(offset, field_idx);
+                    entity_snap.add_attribute(name, value);
+                }
+
+                snapshot.add_entity(entity_snap);
+            }
+        }
+
+        snapshot
+    }
+
+    pub fn restore(&mut self, snapshot: SchemaSnapshot) -> Result<(), String> {
+        self.archetypes.clear();
+        self.allocator = EntityAllocator::new();
+        self.entity_locations.clear();
+        self.pending_entities.clear();
+        self.relations = RelationGraph::new();
+
+        for entity_snap in snapshot.entities {
+            let mut builder = self.entity(&entity_snap.archetype_name);
+
+            for (attr_name, value) in entity_snap.attributes {
+                builder = builder.attr(&attr_name, value);
+            }
+
+            builder.done();
+        }
+
+        Ok(())
+    }
+
+    pub fn save_snapshot(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot = self.snapshot();
+        snapshot.save(path)?;
+        Ok(())
+    }
+
+    pub fn load_snapshot(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let snapshot = SchemaSnapshot::load(path)?;
+        self.restore(snapshot)?;
+        Ok(())
+    }
+
+    // ─── Misc ─────────────────────────────────────────
+
     pub fn memory_bytes(&self) -> usize {
         self.storage.memory_bytes()
     }
 
     pub fn total_memory_bytes(&self) -> usize {
         self.storage.total_memory_bytes()
-    }
-
-    pub fn attr_values<A: TypedAttr>(&self) -> Vec<f64> {
-        let attr_id = match self.interner.find(A::NAME) {
-            Some(id) => id,
-            None => return Vec::new(),
-        };
-        let mut values = Vec::new();
-        if let Some(locations) = self.attr_index.get(&attr_id) {
-            for &(arch_idx, field_idx) in locations {
-                let arch = &self.archetypes[arch_idx];
-                for (_, _, offset) in arch.alive_iter() {
-                    values.push(self.storage.read_float(offset, field_idx));
-                }
-            }
-        }
-        values
-    }
-
-    pub fn apply_resonator<R: Resonator>(
-        &mut self,
-        entity: EntityHandle,
-        resonator: &R,
-    ) {
-        if !self.allocator.is_alive(entity.0) {
-            return;
-        }
-        let eid_idx = entity.0.index as usize;
-        if let Some(Some(loc)) = self.entity_locations.get(eid_idx) {
-            let arch = &self.archetypes[loc.archetype_idx];
-            if arch.is_alive(loc.inner_idx) {
-                let offset = arch.float_offsets[loc.inner_idx];
-                let sp = self.storage.raw_ptrs();
-                let mut ctx = NodeContext::new(sp, offset, entity.0, self.config.epsilon);
-                resonator.apply(&mut ctx);
-            }
-        }
-    }
-
-    pub fn add_resonator_runtime<R>(
-        &mut self,
-        entity: EntityHandle,
-        resonator_factory: R,
-    ) where
-        R: FnOnce(&FieldMap) -> Arc<DynResonator> + 'static,
-    {
-        if !self.allocator.is_alive(entity.0) {
-            return;
-        }
-        let eid_idx = entity.0.index as usize;
-        if let Some(Some(loc)) = self.entity_locations.get(eid_idx) {
-            let arch_idx = loc.archetype_idx;
-            if arch_idx < self.archetypes.len() {
-                let field_map = FieldMap::new(
-                    self.archetypes[arch_idx].schema.field_map.clone(),
-                    self.interner.clone_for_read(),
-                );
-                let resonator = resonator_factory(&field_map);
-                self.archetypes[arch_idx].resonators.push(resonator);
-                self.entities_dirty = true;
-            }
-        }
     }
 
     pub fn set_buffer_mode(&mut self, mode: crate::storage::BufferMode) {
@@ -843,14 +826,14 @@ impl World {
     pub fn layout_version(&self) -> u64 {
         self.layout_version
     }
+
     pub fn interner(&self) -> &StringInterner {
         &self.interner
     }
+
     pub fn interner_mut(&mut self) -> &mut StringInterner {
         &mut self.interner
     }
-
-    // ─── Handle Resolution ───────────────────────────
 
     pub fn get_handle_by_index(&self, index: u32) -> Option<EntityHandle> {
         if !self.allocator.is_alive_index(index) {
@@ -867,95 +850,24 @@ impl World {
         None
     }
 
-    pub fn resolve_spatial_entries(
-        &self,
-        entries: &[crate::spatial::SpatialEntry],
-    ) -> Vec<(EntityHandle, f64, f64)> {
-        let mut result = Vec::with_capacity(entries.len());
-        for entry in entries {
-            if let Some(handle) = self.get_handle_by_index(entry.entity_index) {
-                result.push((handle, entry.x, entry.y));
-            }
-        }
-        result
-    }
-
-    // ─── Tag / Attr Checking ──────────────────────────
-
     pub fn has_tag<A: TypedAttr>(&self, entity: EntityHandle) -> bool {
-        self.read_typed::<A>(entity)
-            .map(|v| v == 1.0)
-            .unwrap_or(false)
+        self.read_typed::<A>(entity).map(|v| v == 1.0).unwrap_or(false)
     }
 
     pub fn has_attr<A: TypedAttr>(&self, entity: EntityHandle) -> bool {
         self.read_typed::<A>(entity).is_some()
     }
 
-    pub fn has_attr_named(&self, entity: EntityHandle, name: &str) -> bool {
-        self.read(entity, name).is_some()
-    }
-
-    // ─── Snapshot / Debug ─────────────────────────────
-
     pub fn snapshot_json(&self) -> String {
-        let mut result = String::from("[\n");
-        let mut first = true;
-        for arch in &self.archetypes {
-            for (_, eid, offset) in arch.alive_iter() {
-                if !first {
-                    result.push_str(",\n");
-                }
-                first = false;
-                result.push_str(&format!(
-                    "  {{\"id\":{},\"arch\":\"{}\",\"attrs\":{{",
-                    eid.index,
-                    arch.name.replace('\"', "\\\"")
-                ));
-                let mut first_attr = true;
-                for (&attr_id, &field_idx) in &arch.schema.field_map {
-                    if !first_attr {
-                        result.push(',');
-                    }
-                    first_attr = false;
-                    let name = self.interner.resolve(attr_id).replace('\"', "\\\"");
-                    let val = self.storage.read_float(offset, field_idx);
-                    result.push_str(&format!("\"{}\":{}", name, val));
-                }
-                result.push_str("}}");
-            }
-        }
-        result.push_str("\n]");
-        result
+        self.snapshot().to_json().unwrap_or_else(|e| {
+            format!("{{\"error\": \"{}\"}}", e)
+        })
     }
+}
 
-    pub fn snapshot_csv(&self, attr_names: &[&str]) -> String {
-        let mut result = String::from("entity_id");
-        for name in attr_names {
-            result.push(',');
-            result.push_str(name);
-        }
-        result.push('\n');
-
-        let attr_ids: Vec<Option<InternedStr>> =
-            attr_names.iter().map(|n| self.interner.find(n)).collect();
-
-        for arch in &self.archetypes {
-            for (_, eid, offset) in arch.alive_iter() {
-                result.push_str(&format!("{}", eid.index));
-                for attr_id_opt in &attr_ids {
-                    result.push(',');
-                    if let Some(attr_id) = attr_id_opt {
-                        if let Some(field) = arch.schema.find_field(*attr_id) {
-                            let val = self.storage.read_float(offset, field);
-                            result.push_str(&format!("{:.6}", val));
-                        }
-                    }
-                }
-                result.push('\n');
-            }
-        }
-        result
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

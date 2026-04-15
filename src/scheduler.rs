@@ -1,15 +1,14 @@
 // src/scheduler.rs
-//! Phase-based scheduler with parallel archetype execution
+//! Phase-based scheduler with SIMD preparation
 
 use crate::archetype::{Archetype, EntityId};
 use crate::context::{CommandBuffer, NodeContext};
 use crate::resonator::DynResonator;
 use crate::storage::{FloatOffset, StoragePtr};
 use rayon::prelude::*;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-/// Result of one tick
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TickResult {
     pub total_calls: u64,
@@ -18,7 +17,6 @@ pub struct TickResult {
     pub despawn_requests: u64,
 }
 
-/// Scheduler config
 pub struct SchedulerConfig {
     pub epsilon: f64,
     pub parallel_threshold: usize,
@@ -35,7 +33,6 @@ impl Default for SchedulerConfig {
     }
 }
 
-/// Result of batch execution for one archetype
 pub struct ArchetypeBatchResult {
     pub calls: u64,
     pub processed: u64,
@@ -44,7 +41,6 @@ pub struct ArchetypeBatchResult {
     pub commands: CommandBuffer,
 }
 
-/// Execute all resonators of one archetype — batch
 pub fn execute_archetype(
     archetype: &Archetype,
     sp: StoragePtr,

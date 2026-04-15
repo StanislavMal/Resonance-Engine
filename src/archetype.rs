@@ -1,8 +1,5 @@
 // src/archetype.rs
 //! Archetype system — shared schema, batch execution
-//!
-//! Одна HashMap на архетип вместо одной на сущность.
-//! Batch execution: один vtable call на архетип, tight loop по данным.
 
 use crate::interning::InternedStr;
 use crate::resonator::DynResonator;
@@ -10,11 +7,9 @@ use crate::storage::{FieldIndex, FloatOffset};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Уникальный ID архетипа
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ArchetypeId(pub u32);
 
-/// Уникальный ID сущности с generational index
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EntityId {
     pub index: u32,
@@ -33,16 +28,11 @@ impl std::fmt::Display for EntityId {
     }
 }
 
-/// Схема архетипа: какие атрибуты, в каком порядке
 #[derive(Clone, Debug)]
 pub struct ArchetypeSchema {
-    /// Имя → позиция поля внутри архетипа
     pub field_map: HashMap<InternedStr, FieldIndex>,
-    /// Обратный порядок: позиция → имя (для отладки)
     pub field_names: Vec<InternedStr>,
-    /// Количество float полей на сущность
     pub floats_per_entity: u16,
-    /// Количество int полей на сущность
     pub ints_per_entity: u16,
 }
 
@@ -56,7 +46,6 @@ impl ArchetypeSchema {
         }
     }
 
-    /// Добавить float атрибут, вернуть его FieldIndex
     pub fn add_float(&mut self, name: InternedStr) -> FieldIndex {
         if let Some(&idx) = self.field_map.get(&name) {
             return idx;
@@ -68,13 +57,11 @@ impl ArchetypeSchema {
         idx
     }
 
-    /// Найти поле по имени
     #[inline]
     pub fn find_field(&self, name: InternedStr) -> Option<FieldIndex> {
         self.field_map.get(&name).copied()
     }
 
-    /// Сигнатура архетипа (для дедупликации): сортированный набор имён
     pub fn signature(&self) -> Vec<InternedStr> {
         let mut sig: Vec<InternedStr> = self.field_map.keys().copied().collect();
         sig.sort_by_key(|s| s.0);
@@ -82,21 +69,20 @@ impl ArchetypeSchema {
     }
 }
 
-/// Данные одного архетипа: все сущности одного типа
+impl Default for ArchetypeSchema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Archetype {
     pub id: ArchetypeId,
     pub schema: ArchetypeSchema,
-    /// Entity IDs в порядке добавления
     pub entities: Vec<EntityId>,
-    /// Float offsets: entities[i] начинается с float_offsets[i]
     pub float_offsets: Vec<FloatOffset>,
-    /// Shared resonators для всех сущностей этого архетипа
     pub resonators: Vec<Arc<DynResonator>>,
-    /// Имя архетипа (для отладки)
     pub name: String,
-    /// Битовая маска живых сущностей
     alive: Vec<bool>,
-    /// Free list внутри архетипа
     free_indices: Vec<usize>,
 }
 
@@ -114,7 +100,6 @@ impl Archetype {
         }
     }
 
-    /// Добавить сущность, вернуть внутренний индекс
     pub fn add_entity(&mut self, entity_id: EntityId, float_offset: FloatOffset) -> usize {
         if let Some(reuse_idx) = self.free_indices.pop() {
             self.entities[reuse_idx] = entity_id;
@@ -130,7 +115,6 @@ impl Archetype {
         }
     }
 
-    /// Удалить сущность по внутреннему индексу
     pub fn remove_entity(&mut self, inner_idx: usize) -> bool {
         if inner_idx < self.alive.len() && self.alive[inner_idx] {
             self.alive[inner_idx] = false;
@@ -141,7 +125,6 @@ impl Archetype {
         }
     }
 
-    /// Итератор по живым (inner_idx, entity_id, float_offset)
     pub fn alive_iter(&self) -> impl Iterator<Item = (usize, EntityId, FloatOffset)> + '_ {
         self.entities
             .iter()
@@ -165,7 +148,6 @@ impl Archetype {
         inner_idx < self.alive.len() && self.alive[inner_idx]
     }
 
-    /// Собрать вектор (float_offset, entity_id) только живых — для batch execution
     pub fn collect_alive_batch(&self) -> Vec<(FloatOffset, EntityId)> {
         let mut batch = Vec::with_capacity(self.alive_count());
         for i in 0..self.entities.len() {
@@ -177,13 +159,9 @@ impl Archetype {
     }
 }
 
-/// Аллокатор EntityId с generational index
-///
-/// Использует битовый вектор для O(1) проверки alive вместо linear scan по free_list.
 pub struct EntityAllocator {
     next_index: u32,
     generations: Vec<u32>,
-    /// Битовый вектор: true = слот занят (alive), false = свободен
     alive_bits: Vec<bool>,
     free_list: Vec<u32>,
 }
@@ -224,7 +202,6 @@ impl EntityAllocator {
         }
     }
 
-    /// Проверить что EntityId жив И generation совпадает — O(1)
     #[inline]
     pub fn is_alive(&self, id: EntityId) -> bool {
         let idx = id.index as usize;
@@ -233,7 +210,6 @@ impl EntityAllocator {
             && self.alive_bits[idx]
     }
 
-    /// Получить текущее поколение слота
     #[inline]
     pub fn generation_of(&self, index: u32) -> u32 {
         let idx = index as usize;
@@ -244,10 +220,15 @@ impl EntityAllocator {
         }
     }
 
-    /// Проверить что слот занят по индексу (без проверки generation) — O(1)
     #[inline]
     pub fn is_alive_index(&self, index: u32) -> bool {
         let idx = index as usize;
         idx < self.alive_bits.len() && self.alive_bits[idx]
+    }
+}
+
+impl Default for EntityAllocator {
+    fn default() -> Self {
+        Self::new()
     }
 }

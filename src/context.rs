@@ -1,56 +1,23 @@
 // src/context.rs
-//! NodeContext — per-entity access during resonator execution
-//!
-//! Own fields: read from WRITE buffer (see own changes within tick)
-//! External fields: read from READ buffer (deterministic snapshot)
-//!
-//! ## Tick lifecycle
-//!
-//! Within a single tick, the order of operations is:
-//!
-//! 1. `storage.begin_tick()` — mark tick as active
-//! 2. For each archetype (parallel across archetypes):
-//!    a. Collect alive entities
-//!    b. For each entity, create NodeContext
-//!    c. Execute ALL resonators on that entity, in order they were added
-//!    d. If `despawn_self()` was called, entity is added to despawn queue
-//!       (but entity remains accessible for the rest of THIS tick)
-//! 3. `storage.commit()` — sync double-buffer
-//! 4. Process despawn queue — entities actually removed
-//! 5. `storage.end_tick()` — mark tick as finished
-//!
-//! Key consequence: `despawn_self()` is deferred. The entity's data stays
-//! valid for the remainder of the current tick. Other entities reading it
-//! via `read_external` in the same tick will still see valid data.
+//! NodeContext — per-entity access during resonator execution with safe external reads
 
 use crate::accessor::AttrOffset;
 use crate::archetype::EntityId;
 use crate::storage::{FieldIndex, FloatOffset, StoragePtr};
+use crate::world::World;
 
-/// Opaque request to spawn an entity after the current tick.
-/// Collected from resonators and processed by World after tick completes.
 #[derive(Clone, Debug)]
 pub struct SpawnRequest {
     pub archetype_name: String,
     pub overrides: Vec<(String, f64)>,
 }
 
-/// Opaque request to modify another entity after the current tick.
-/// Collected from resonators and processed by World after tick completes.
 #[derive(Clone, Debug)]
 pub struct WriteRequest {
     pub target_offset: AttrOffset,
     pub value: f64,
 }
 
-/// Command buffer for deferred operations from within resonators.
-///
-/// Resonators cannot directly spawn entities or write to other entities.
-/// Instead, they push commands into this buffer, which the World processes
-/// after all resonators have finished executing.
-///
-/// Thread safety: each parallel chunk gets its own CommandBuffer.
-/// After the tick, all buffers are merged.
 #[derive(Clone, Debug, Default)]
 pub struct CommandBuffer {
     pub spawn_requests: Vec<SpawnRequest>,
@@ -69,7 +36,6 @@ impl CommandBuffer {
             && self.despawn_requests.is_empty()
     }
 
-    /// Merge another buffer into this one (used after parallel execution)
     pub fn merge(&mut self, other: CommandBuffer) {
         self.spawn_requests.extend(other.spawn_requests);
         self.write_requests.extend(other.write_requests);
@@ -108,10 +74,6 @@ impl NodeContext {
 
     // ─── Own field access ─────────────────────────────
 
-    /// Read own float field.
-    ///
-    /// Reads from WRITE buffer — you see your own writes from earlier
-    /// resonators in the same tick.
     #[inline(always)]
     pub fn get(&self, field: FieldIndex) -> f64 {
         unsafe {
@@ -120,13 +82,6 @@ impl NodeContext {
         }
     }
 
-    /// Write float field with epsilon check.
-    ///
-    /// If the new value differs from the old value by less than epsilon
-    /// (default 1e-9), the write is skipped and dirty flag is NOT set.
-    /// This avoids unnecessary buffer copies in double-buffer mode.
-    ///
-    /// Use `set_unchecked` when you know the value is changing.
     #[inline(always)]
     pub fn set(&mut self, field: FieldIndex, value: f64) {
         unsafe {
@@ -139,13 +94,6 @@ impl NodeContext {
         }
     }
 
-    /// Write float field, always marks dirty.
-    ///
-    /// Skips the epsilon comparison. Use when you know the value is changing,
-    /// or when performance matters more than skipping no-op writes.
-    ///
-    /// This is NOT "unchecked" in the unsafe sense — there are still bounds
-    /// checks in debug mode. The name means "no epsilon check".
     #[inline(always)]
     pub fn set_unchecked(&mut self, field: FieldIndex, value: f64) {
         unsafe {
@@ -154,14 +102,12 @@ impl NodeContext {
         }
     }
 
-    /// Read, apply function, write back (with epsilon check).
     #[inline(always)]
     pub fn modify(&mut self, field: FieldIndex, f: impl FnOnce(f64) -> f64) {
         let old = self.get(field);
         self.set(field, f(old));
     }
 
-    /// Add to current value (no epsilon check).
     #[inline(always)]
     pub fn add(&mut self, field: FieldIndex, amount: f64) {
         let old = self.get(field);
@@ -170,14 +116,11 @@ impl NodeContext {
 
     // ─── Entity identity ──────────────────────────────
 
-    /// This entity's ID
     #[inline(always)]
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
-    /// Base offset of this entity in the global float buffer.
-    /// Useful for skipping self when iterating over pre-resolved offsets.
     #[inline(always)]
     pub fn base_offset(&self) -> usize {
         self.base_offset
@@ -185,12 +128,6 @@ impl NodeContext {
 
     // ─── Despawn ──────────────────────────────────────
 
-    /// Request despawn at end of tick.
-    ///
-    /// The entity remains alive and accessible for the rest of the current tick.
-    /// All remaining resonators for this entity will still execute.
-    /// Other entities reading this entity via `read_external` will still see valid data.
-    /// Actual removal happens after `storage.commit()`.
     #[inline(always)]
     pub fn despawn_self(&mut self) {
         self.despawn_requested = true;
@@ -201,27 +138,26 @@ impl NodeContext {
         self.despawn_requested
     }
 
-    // ─── Cross-entity reads ───────────────────────────
+    // ─── Cross-entity reads (NOW SAFE) ────────────────
 
-    /// Read another entity's attribute value.
+    /// Read another entity's attribute value with validation
     ///
-    /// - In **Double buffer** mode: reads from previous tick's snapshot — deterministic.
-    /// - In **Single buffer** mode: reads current (possibly modified) data.
-    ///
-    /// The offset must come from `world.absolute_offset::<Attr>(entity)` or
-    /// `EntityAccessor::resolve::<Attr>(world, entity)`. Do not fabricate offsets.
-    ///
-    /// If the target entity was despawned, the data at that offset is still
-    /// physically present but stale. For correctness, re-resolve offsets after
-    /// any despawn cycle, or check validity before reading.
+    /// Returns None if target entity was despawned or generation mismatched
     #[inline(always)]
-    pub fn read_external(&self, offset: AttrOffset) -> f64 {
-        unsafe { self.ptr.read_float(offset.0) }
+    pub fn read_external(&self, offset: AttrOffset, world: &World) -> Option<f64> {
+        // Validate generation before read
+        if !offset.validate(world) {
+            return None;
+        }
+        Some(unsafe { self.ptr.read_float(offset.offset) })
     }
 
-    /// Read another entity's field using base offset + field index.
-    ///
-    /// Safer than raw offset: `FieldIndex` comes from schema resolution.
+    /// Read without validation (use only if you know entity is alive)
+    #[inline(always)]
+    pub unsafe fn read_external_unchecked(&self, offset: AttrOffset) -> f64 {
+        self.ptr.read_float(offset.offset)
+    }
+
     #[inline(always)]
     pub fn read_external_field(&self, base_offset: usize, field: FieldIndex) -> f64 {
         unsafe { self.ptr.read_float(base_offset + field.0 as usize) }
@@ -229,20 +165,6 @@ impl NodeContext {
 
     // ─── Deferred commands ────────────────────────────
 
-    /// Request to write a value to another entity's attribute after this tick.
-    ///
-    /// The write is deferred — it will be applied by World after all resonators
-    /// have finished executing. This preserves determinism: all resonators in a
-    /// tick see the same snapshot of data.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Pre-resolve target offset before tick:
-    /// let target_hp = world.absolute_offset::<Health>(enemy).unwrap();
-    ///
-    /// // In resonator:
-    /// ctx.defer_write(target_hp, current_target_hp - 10.0);
-    /// ```
     #[inline]
     pub fn defer_write(&mut self, target_offset: AttrOffset, value: f64) {
         self.commands.write_requests.push(WriteRequest {
@@ -251,19 +173,6 @@ impl NodeContext {
         });
     }
 
-    /// Request to spawn a new entity after this tick.
-    ///
-    /// The entity will be created using `spawn_runtime` with the given
-    /// archetype name and attribute overrides.
-    ///
-    /// # Example
-    /// ```ignore
-    /// ctx.defer_spawn("Bullet", vec![
-    ///     ("PosX".into(), my_x),
-    ///     ("PosY".into(), my_y),
-    ///     ("VelX".into(), aim_x * 10.0),
-    /// ]);
-    /// ```
     #[inline]
     pub fn defer_spawn(&mut self, archetype_name: &str, overrides: Vec<(String, f64)>) {
         self.commands.spawn_requests.push(SpawnRequest {
@@ -272,15 +181,11 @@ impl NodeContext {
         });
     }
 
-    /// Request to despawn another entity after this tick.
-    ///
-    /// Unlike `despawn_self()`, this targets a different entity by its EntityId.
     #[inline]
     pub fn defer_despawn(&mut self, target: EntityId) {
         self.commands.despawn_requests.push(target);
     }
 
-    /// Take the accumulated command buffer (called by scheduler after resonators)
     #[inline]
     pub fn take_commands(&mut self) -> CommandBuffer {
         std::mem::take(&mut self.commands)
